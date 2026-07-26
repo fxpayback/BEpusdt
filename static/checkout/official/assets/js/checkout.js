@@ -22,6 +22,13 @@
 
     function initI18n() {
         lang = detectLang();
+        try {
+            var current = new URL(window.location.href);
+            if (current.searchParams.get('lang') !== lang) {
+                current.searchParams.set('lang', lang);
+                window.history.replaceState(null, '', current.toString());
+            }
+        } catch (e) {}
         return new Promise(function (resolve) {
             if (typeof i18next === 'undefined') return resolve();
             i18next.init({ lng: lang, debug: false, resources: {} }, function (err) {
@@ -496,7 +503,7 @@
         fetch('/api/v1/pay/update-order', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ trade_id: tradeId, currency: selMethod.currency, network: selMethod.network })
+            body: JSON.stringify({ trade_id: tradeId, currency: selMethod.currency, network: selMethod.network, locale: lang })
         })
             .then(function (r) { return r.json(); })
             .then(function (res) {

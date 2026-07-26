@@ -56,3 +56,18 @@ func TestOfficialCheckoutFeeNoticeWraps(t *testing.T) {
 		t.Fatal("official checkout fee notice must not truncate localized text")
 	}
 }
+
+func TestOfficialCheckoutPreservesLocale(t *testing.T) {
+	js, err := fs.ReadFile(static.Checkout, "checkout/official/assets/js/checkout.js")
+	if err != nil {
+		t.Fatalf("read official checkout JavaScript: %v", err)
+	}
+
+	content := string(js)
+	if !strings.Contains(content, "current.searchParams.set('lang', lang)") {
+		t.Fatal("official checkout must canonicalize a missing locale in the browser URL")
+	}
+	if !strings.Contains(content, "locale: lang") {
+		t.Fatal("official checkout must preserve locale when reselecting currency or network")
+	}
+}

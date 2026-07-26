@@ -49,6 +49,7 @@ type updateOrderReq struct {
 	TradeID  string `json:"trade_id" binding:"required"`
 	Currency string `json:"currency" binding:"required"`
 	Network  string `json:"network" binding:"required"`
+	Locale   string `json:"locale"`
 }
 
 type cancelReq struct {
@@ -246,7 +247,7 @@ func (Epusdt) UpdateOrder(ctx *gin.Context) {
 		"actual_amount":   newOrder.Amount,
 		"token":           newOrder.Address,
 		"expiration_time": uint64(newOrder.ExpiredAt.Sub(time.Now()).Seconds()),
-		"payment_url":     model.CheckoutUrl(host, newOrder.TradeId),
+		"payment_url":     model.CheckoutURLWithLocale(host, newOrder.TradeId, req.Locale),
 	}))
 }
 
