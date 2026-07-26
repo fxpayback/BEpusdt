@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -18,7 +19,9 @@ import (
 var confCache sync.Map
 var defaultConf = map[ConfKey]string{
 	ApiAppUri:               "",
+	ApiMerchantTokens:       "{}",
 	RateSyncInterval:        "3600",
+	RateSyncMaxAge:          "900",
 	AtomUSDT:                "0.01",
 	AtomUSDC:                "0.01",
 	AtomTRX:                 "0.01",
@@ -206,6 +209,38 @@ func ConfInit() {
 func AuthToken() string {
 
 	return GetK(ApiAuthToken)
+}
+
+// AuthTokenForOrderID returns the token owned by the longest configured order
+// prefix. A longest-prefix match avoids ambiguous behavior when a deployment
+// intentionally nests merchant prefixes. Legacy orders fall back to the
+// original global API token.
+func AuthTokenForOrderID(orderID string) string {
+	orderID = strings.TrimSpace(orderID)
+	if orderID == "" {
+		return AuthToken()
+	}
+
+	var tokens map[string]string
+	if err := json.Unmarshal([]byte(GetK(ApiMerchantTokens)), &tokens); err != nil {
+		return AuthToken()
+	}
+
+	bestPrefix := ""
+	bestToken := ""
+	for rawPrefix, rawToken := range tokens {
+		prefix := strings.TrimSpace(rawPrefix)
+		token := strings.TrimSpace(rawToken)
+		if prefix != "" && token != "" && strings.HasPrefix(orderID, prefix) && len(prefix) > len(bestPrefix) {
+			bestPrefix = prefix
+			bestToken = token
+		}
+	}
+	if bestToken != "" {
+		return bestToken
+	}
+
+	return AuthToken()
 }
 
 func IsInstalled() bool {

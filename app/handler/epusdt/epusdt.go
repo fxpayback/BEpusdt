@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -97,7 +98,7 @@ func (Epusdt) Notify(ctx *gin.Context) {
 		return
 	}
 
-	if utils.EpusdtSign(m, model.AuthToken()) != sign {
+	if utils.EpusdtSign(m, authTokenForPayload(m)) != sign {
 		ctx.String(200, "fail")
 		return
 	}
@@ -124,14 +125,15 @@ func (Epusdt) CreateOrder(ctx *gin.Context) {
 		return
 	}
 
-	// 解析请求地址
-	host := "http://" + ctx.Request.Host
-	if ctx.Request.TLS != nil {
-		host = "https://" + ctx.Request.Host
-	}
+	// Preserve the public scheme when TLS is terminated by the reverse proxy.
+	host := utils.GetRequestHost(ctx.Request)
 
 	if req.Fiat == "" {
 		req.Fiat = model.CNY
+	}
+	if err := validateCreateOrderRates(req.Currencies, req.Fiat); err != nil {
+		ctx.JSON(200, respFailJson(fmt.Sprintf("CreateOrder: %s", err.Error())))
+		return
 	}
 
 	// 创建待付款订单
@@ -176,11 +178,8 @@ func (Epusdt) UpdateOrder(ctx *gin.Context) {
 		return
 	}
 
-	// 解析请求地址
-	host := "http://" + ctx.Request.Host
-	if ctx.Request.TLS != nil {
-		host = "https://" + ctx.Request.Host
-	}
+	// Preserve the public scheme when TLS is terminated by the reverse proxy.
+	host := utils.GetRequestHost(ctx.Request)
 
 	order, ok := loadPayOrder(ctx, req.TradeID)
 	if !ok {
@@ -343,6 +342,66 @@ func (Epusdt) CancelTransaction(ctx *gin.Context) {
 	ctx.JSON(200, respSuccJson(gin.H{"trade_id": req.TradeID}))
 }
 
+// QueryTransaction exposes merchant-side reconciliation without using the
+// browser checkout endpoint, whose fingerprint binding is intentionally kept.
+func (Epusdt) QueryTransaction(ctx *gin.Context) {
+	var req infoReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(200, respFailJson(fmt.Sprintf("请求参数错误：%s", err.Error())))
+		return
+	}
+
+	order, ok := model.GetTradeOrder(req.TradeID)
+	if !ok {
+		ctx.JSON(200, respFailJson("订单不存在"))
+		return
+	}
+
+	data := gin.H{
+		"trade_id":             order.TradeId,
+		"order_id":             order.OrderId,
+		"trade_type":           order.TradeType,
+		"fiat":                 order.Fiat,
+		"currency":             order.Crypto,
+		"amount":               order.Money,
+		"actual_amount":        order.Amount,
+		"status":               order.Status,
+		"block_transaction_id": order.RefHash,
+		"expired_at":           order.ExpiredAt.UTC().Format(time.RFC3339),
+	}
+	if order.CreatedAt != nil {
+		data["created_at"] = order.CreatedAt.Time().UTC().Format(time.RFC3339)
+	}
+	if order.ConfirmedAt != nil {
+		data["confirmed_at"] = order.ConfirmedAt.UTC().Format(time.RFC3339)
+	}
+
+	ctx.JSON(200, respSuccJson(data))
+}
+
+func validateCreateOrderRates(currencies string, fiat model.Fiat) error {
+	currencies = strings.TrimSpace(currencies)
+	if currencies == "" || strings.HasPrefix(currencies, "-") {
+		return nil
+	}
+
+	supported := model.GetSupportCrypto()
+	for _, raw := range strings.Split(currencies, ",") {
+		crypto := model.Crypto(strings.ToUpper(strings.TrimSpace(raw)))
+		if crypto == "" {
+			continue
+		}
+		if _, ok := supported[crypto]; !ok {
+			return fmt.Errorf("unsupported currency: %s", crypto)
+		}
+		syntax := model.GetK(model.ConfKey(fmt.Sprintf("rate_float_%s_%s", crypto, fiat)))
+		if _, err := model.GetOrderRate(crypto, fiat, syntax); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (Epusdt) Checkout(ctx *gin.Context) {
 	tradeId := ctx.Param("trade_id")
 	if _, ok := model.GetTradeOrder(tradeId); !ok {
@@ -442,7 +501,14 @@ func (Epusdt) SignVerify(ctx *gin.Context) {
 		return
 	}
 
-	if utils.EpusdtSign(m, model.AuthToken()) != sign {
+	authToken, ok := requestAuthToken(m)
+	if !ok {
+		ctx.JSON(200, respFailJson("订单不存在"))
+		ctx.Abort()
+		return
+	}
+
+	if utils.EpusdtSign(m, authToken) != sign {
 		ctx.JSON(200, respFailJson("签名错误"))
 		ctx.Abort()
 
@@ -451,6 +517,39 @@ func (Epusdt) SignVerify(ctx *gin.Context) {
 
 	ctx.Request.Body = io.NopCloser(bytes.NewBuffer(rawData)) // 回写数据
 	ctx.Next()
+}
+
+func requestAuthToken(payload map[string]any) (string, bool) {
+	// trade_id takes precedence so an attacker cannot add a foreign order_id
+	// field to authorize a query or cancellation with another merchant's token.
+	if tradeID := payloadString(payload, "trade_id"); tradeID != "" {
+		order, ok := model.GetTradeOrder(tradeID)
+		if !ok {
+			return "", false
+		}
+		return model.AuthTokenForOrderID(order.OrderId), true
+	}
+	return model.AuthTokenForOrderID(payloadString(payload, "order_id")), true
+}
+
+func authTokenForPayload(payload map[string]any) string {
+	if tradeID := payloadString(payload, "trade_id"); tradeID != "" {
+		if order, ok := model.GetTradeOrder(tradeID); ok {
+			return model.AuthTokenForOrderID(order.OrderId)
+		}
+	}
+	if orderID := payloadString(payload, "order_id"); orderID != "" {
+		return model.AuthTokenForOrderID(orderID)
+	}
+	return model.AuthToken()
+}
+
+func payloadString(payload map[string]any, key string) string {
+	value, ok := payload[key].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 func respFailJson(message string) gin.H {

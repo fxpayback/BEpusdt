@@ -117,7 +117,9 @@ func CoingeckoRate() error {
 		return errors.New("CoingeckoRate: no data")
 	}
 
-	Db.Create(&rows)
+	if err := Db.Create(&rows).Error; err != nil {
+		return fmt.Errorf("CoingeckoRate: save rates: %w", err)
+	}
 
 	return nil
 }
@@ -175,16 +177,33 @@ func round(val float64, precision int) float64 {
 
 func GetOrderRate(token Crypto, fiat Fiat, syntax string) (decimal.Decimal, error) {
 	var r Rate
-	Db.Where("crypto = ? and fiat = ?", token, fiat).Order("created_at desc").Limit(1).Find(&r)
+	result := Db.Where("crypto = ? and fiat = ?", token, fiat).Order("created_at desc").Limit(1).Find(&r)
+	if result.Error != nil {
+		return decimal.Decimal{}, fmt.Errorf("创建失败，汇率数据读取异常：%s %s", token, fiat)
+	}
 	if r.ID == 0 {
 
 		return decimal.Decimal{}, fmt.Errorf("创建失败，请检查汇率同步是否正常：%s %s", token, fiat)
 	}
 
-	if syntax == "" {
-
-		return decimal.NewFromString(r.Rate)
+	maxAgeSeconds := cast.ToInt64(GetC(RateSyncMaxAge))
+	if maxAgeSeconds <= 0 {
+		maxAgeSeconds = 900
+	}
+	now := time.Now()
+	if r.CreatedAt == nil || r.CreatedAt.Time().After(now.Add(time.Minute)) || now.Sub(r.CreatedAt.Time()) > time.Duration(maxAgeSeconds)*time.Second {
+		return decimal.Decimal{}, fmt.Errorf("创建失败，汇率数据已过期：%s %s", token, fiat)
 	}
 
-	return decimal.NewFromFloat(ParseFloatRate(syntax, r.RawRate)), nil
+	var rate decimal.Decimal
+	var err error
+	if syntax == "" {
+		rate, err = decimal.NewFromString(r.Rate)
+	} else {
+		rate = decimal.NewFromFloat(ParseFloatRate(syntax, r.RawRate))
+	}
+	if err != nil || rate.LessThanOrEqual(decimal.Zero) {
+		return decimal.Decimal{}, fmt.Errorf("创建失败，汇率数据无效：%s %s", token, fiat)
+	}
+	return rate, nil
 }

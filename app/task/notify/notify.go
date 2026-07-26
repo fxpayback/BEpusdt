@@ -24,6 +24,9 @@ import (
 type EpNotify struct {
 	TradeId            string  `json:"trade_id"`             //  本地订单号
 	OrderId            string  `json:"order_id"`             //  客户交易id
+	TradeType          string  `json:"trade_type"`           //  支付链路
+	Fiat               string  `json:"fiat"`                 //  法币类型
+	Currency           string  `json:"currency"`             //  支付代币
 	Amount             float64 `json:"amount"`               //  订单金额 CNY
 	ActualAmount       string  `json:"actual_amount"`        //  USDT 交易数额
 	Token              string  `json:"token"`                //  收款钱包地址
@@ -107,6 +110,9 @@ func epusdt(ctx context.Context, order model.Order) error {
 	var body = EpNotify{
 		TradeId:            order.TradeId,
 		OrderId:            order.OrderId,
+		TradeType:          string(order.TradeType),
+		Fiat:               string(order.Fiat),
+		Currency:           string(order.Crypto),
 		Amount:             cast.ToFloat64(order.Money),
 		ActualAmount:       order.Amount,
 		Token:              order.Address,
@@ -123,7 +129,7 @@ func epusdt(ctx context.Context, order model.Order) error {
 	}
 
 	// 签名
-	body.Signature = utils.EpusdtSign(data, model.AuthToken())
+	body.Signature = utils.EpusdtSign(data, model.AuthTokenForOrderID(order.OrderId))
 
 	// 再次序列化
 	jsonBody, err = json.Marshal(body)
@@ -166,10 +172,9 @@ func Bepusdt(o model.Order) {
 		return
 	}
 
-	var authToken = model.AuthToken()
 	var client = &http.Client{Timeout: time.Second * 5}
 	go func() {
-		if err := deliverBepusdtStatusUpdate(model.Db, client, authToken, o); err != nil {
+		if err := deliverBepusdtStatusUpdate(model.Db, client, "", o); err != nil {
 			log.Warn("notify BEpusdt Error:", err.Error())
 		}
 	}()
@@ -188,6 +193,9 @@ func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken stri
 	if tx.RowsAffected == 0 {
 		return nil
 	}
+	if strings.TrimSpace(authToken) == "" {
+		authToken = model.AuthTokenForOrderID(current.OrderId)
+	}
 
 	var key = fmt.Sprintf("bepusdt_notify_%d_%s", current.Status, current.TradeId)
 	if _, ok := cache.Get(key); ok {
@@ -200,6 +208,9 @@ func deliverBepusdtStatusUpdate(db *gorm.DB, client *http.Client, authToken stri
 	var body = EpNotify{
 		TradeId:            current.TradeId,
 		OrderId:            current.OrderId,
+		TradeType:          string(current.TradeType),
+		Fiat:               string(current.Fiat),
+		Currency:           string(current.Crypto),
 		Amount:             cast.ToFloat64(current.Money),
 		ActualAmount:       current.Amount,
 		Token:              current.Address,

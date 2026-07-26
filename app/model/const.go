@@ -36,7 +36,11 @@ const (
 	AdminLoginAt  ConfKey = "admin_login_at"
 
 	ApiAuthToken ConfKey = "api_auth_token" // API 对接令牌
-	ApiAppUri    ConfKey = "api_app_uri"    // API 对接地址（收银台地址）
+	// ApiMerchantTokens maps merchant order prefixes to isolated API tokens.
+	// Orders without a configured prefix continue to use ApiAuthToken for
+	// backwards compatibility.
+	ApiMerchantTokens ConfKey = "api_merchant_tokens"
+	ApiAppUri         ConfKey = "api_app_uri" // API 对接地址（收银台地址）
 
 	AtomUSDT ConfKey = "atom_usdt"
 	AtomUSDC ConfKey = "atom_usdc"
@@ -71,6 +75,7 @@ const (
 	RateSyncCoingeckoApiUrl ConfKey = "rate_sync_coingecko_api_url" // 汇率同步 Coingecko Api URL
 	RateSyncCoingeckoApiKey ConfKey = "rate_sync_coingecko_api_key" // 汇率同步 Coingecko Api Key
 	RateSyncInterval        ConfKey = "rate_sync_interval"          // 汇率同步间隔，单位秒
+	RateSyncMaxAge          ConfKey = "rate_sync_max_age"           // 汇率最大有效期，单位秒；超时后停止创建付款详情
 	RateSyncHistoryDays     ConfKey = "rate_sync_history_days"      // 历史汇率保存天数
 
 	NotifyMaxRetry     ConfKey = "notify_max_retry"      // 最大重试次数，订单回调失败

@@ -18,6 +18,7 @@ func epusdtInit(engine *gin.Engine) {
 		orderGrp.POST("/create-transaction", epHdr.CreateTransaction)
 		orderGrp.POST("/cancel-transaction", epHdr.CancelTransaction)
 		orderGrp.POST("/create-order", epHdr.CreateOrder)
+		orderGrp.POST("/query-transaction", epHdr.QueryTransaction)
 	}
 
 	payGrp := engine.Group("/api/v1/pay")

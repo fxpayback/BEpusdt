@@ -216,7 +216,7 @@ func (o *Order) RedirectUrl() string {
 
 func (o *Order) BuildNotifyParams() string {
 	var signStr = utils.Md5String(fmt.Sprintf("money=%s&name=%s&out_trade_no=%s&pid=%s&trade_no=%s&trade_status=TRADE_SUCCESS&type=%s",
-		cast.ToString(o.Money), o.Name, o.OrderId, conf.Pid, o.TradeId, o.TradeType) + AuthToken())
+		cast.ToString(o.Money), o.Name, o.OrderId, conf.Pid, o.TradeId, o.TradeType) + AuthTokenForOrderID(o.OrderId))
 	var params = fmt.Sprintf("money=%s&name=%s&out_trade_no=%s&pid=%s&trade_no=%s&trade_status=TRADE_SUCCESS&type=%s",
 		cast.ToString(o.Money), url.QueryEscape(o.Name), url.QueryEscape(o.OrderId), conf.Pid, o.TradeId, o.TradeType)
 
@@ -381,7 +381,14 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 	status := []int{OrderStatusConfirming, OrderStatusWaiting}
 	Db.Where("status in (?) and trade_type = ?", status, p.TradeType).Find(&orders)
 	for _, order := range orders {
-		lock[order.Address+order.Amount] = true
+		matchAddress := order.MatchAddress
+		if matchAddress == "" {
+			matchAddress = order.Address
+			if !AddrCaseSens(order.TradeType) {
+				matchAddress = strings.ToLower(matchAddress)
+			}
+		}
+		lock[matchAddress+order.Amount] = true
 	}
 
 	atom, precision := GetAtomicity(p.TradeType)
