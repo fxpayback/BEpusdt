@@ -377,8 +377,11 @@ func getConfirmingOrders(tradeType []model.TradeType) []model.Order {
 }
 
 func amountMatch(amount decimal.Decimal, target, tradeType string) bool {
-	mode := model.GetC(model.PaymentMatchMode)
-	switch model.MatchMode(mode) {
+	return amountMatchMode(amount, target, tradeType, model.MatchMode(model.GetC(model.PaymentMatchMode)))
+}
+
+func amountMatchMode(amount decimal.Decimal, target, tradeType string, mode model.MatchMode) bool {
+	switch mode {
 	case model.Classic:
 		return amount.String() == target
 	case model.HasPrefix:
