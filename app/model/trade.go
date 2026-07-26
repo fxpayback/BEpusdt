@@ -80,7 +80,7 @@ func StartBuildOrder(p OrderParams) (Order, error) {
 		return order, nil
 	}
 	if order.Status == OrderStatusWaiting {
-		return RebuildOrder(order, p)
+		return rebuildOrder(order, p)
 	}
 
 	data, err := BuildTrade(p)
@@ -180,6 +180,24 @@ func BuildTrade(p OrderParams) (Trade, error) {
 }
 
 func RebuildOrder(t Order, p OrderParams) (Order, error) {
+	buildMutex.Lock()
+	defer buildMutex.Unlock()
+
+	if t.ID != 0 {
+		var current Order
+		if err := Db.Where("id = ?", t.ID).Limit(1).Take(&current).Error; err != nil {
+			return t, err
+		}
+		t = current
+	}
+	if p.ClientFingerprint != "" && t.ClientFingerprint != "" && t.ClientFingerprint != p.ClientFingerprint {
+		return t, fmt.Errorf("client fingerprint mismatch")
+	}
+
+	return rebuildOrder(t, p)
+}
+
+func rebuildOrder(t Order, p OrderParams) (Order, error) {
 	if p.OrderId == t.OrderId && p.TradeType == t.TradeType && p.Money.String() == t.Money && p.Fiat == t.Fiat {
 		return t, nil
 	}
@@ -232,6 +250,9 @@ func RebuildOrder(t Order, p OrderParams) (Order, error) {
 
 // BuildPendingOrder 创建待支付订单（不锁定地址和汇率）
 func BuildPendingOrder(p OrderParams) (Order, error) {
+	buildMutex.Lock()
+	defer buildMutex.Unlock()
+
 	var order Order
 
 	maxAmount := decimal.NewFromFloat(cast.ToFloat64(GetC(PaymentMaxAmount)))
