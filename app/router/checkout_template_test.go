@@ -41,3 +41,18 @@ func TestLangGeCheckoutTemplateIsEmbedded(t *testing.T) {
 		t.Fatal("langge checkout template was not registered under expected name")
 	}
 }
+
+func TestOfficialCheckoutFeeNoticeWraps(t *testing.T) {
+	css, err := fs.ReadFile(static.Checkout, "checkout/official/assets/css/checkout.css")
+	if err != nil {
+		t.Fatalf("read official checkout CSS: %v", err)
+	}
+
+	content := string(css)
+	if !strings.Contains(content, "white-space: normal;") || !strings.Contains(content, "overflow-wrap: anywhere;") {
+		t.Fatal("official checkout fee notice must allow long localized text to wrap")
+	}
+	if strings.Contains(content, "text-overflow: ellipsis;") {
+		t.Fatal("official checkout fee notice must not truncate localized text")
+	}
+}

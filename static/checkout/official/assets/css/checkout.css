@@ -128,8 +128,8 @@ body {
 .network-tag { font-weight: 500; color: var(--color-text-muted); }
 
 .fee-notice {
-    display: inline-flex;
-    align-items: center;
+    display: flex;
+    align-items: flex-start;
     gap: 5px;
     background: #e8f4ff;
     color: #2563eb;
@@ -137,13 +137,14 @@ body {
     padding: 5px 10px;
     font-size: 12px;
     font-weight: 500;
-    white-space: nowrap;
-    flex-shrink: 1;
+    line-height: 1.45;
+    white-space: normal;
+    flex: 1 1 260px;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    max-width: 100%;
+    overflow-wrap: anywhere;
 }
-.fee-notice svg { flex-shrink: 0; width: 13px; height: 13px; }
+.fee-notice svg { flex-shrink: 0; width: 13px; height: 13px; margin-top: 2px; }
 
 .timer-badge-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
 .timer-badge {
