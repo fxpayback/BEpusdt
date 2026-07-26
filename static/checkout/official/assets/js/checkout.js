@@ -14,6 +14,8 @@
 
     function detectLang() {
         try {
+            var requested = new URLSearchParams(window.location.search).get('lang');
+            if (requested === 'zh' || requested === 'en') return requested;
             return ((navigator.language || navigator.userLanguage || 'en').toLowerCase().indexOf('zh') === 0) ? 'zh' : 'en';
         } catch (e) { return 'en'; }
     }
@@ -72,6 +74,11 @@
         if (l !== 'zh' && l !== 'en') { console.warn('Use "zh" or "en"'); return; }
         if (typeof i18next === 'undefined') return;
         lang = l;
+        try {
+            var current = new URL(window.location.href);
+            current.searchParams.set('lang', l);
+            window.history.replaceState(null, '', current.toString());
+        } catch (e) {}
         fetch('/checkout/official/assets/locales/' + l + '.json')
             .then(function (r) { return r.json(); })
             .then(function (d) {

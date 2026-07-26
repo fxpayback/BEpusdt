@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -145,6 +146,37 @@ func CheckoutUrl(host, id string) string {
 	}
 
 	return fmt.Sprintf("%s/pay/checkout/%s", uri, id)
+}
+
+func CheckoutURLWithLocale(host, id, locale string) string {
+	return checkoutURLWithLocale(CheckoutUrl(host, id), locale)
+}
+
+func checkoutURLWithLocale(checkoutURL, locale string) string {
+	normalized := normalizeCheckoutLocale(locale)
+	if normalized == "" {
+		return checkoutURL
+	}
+
+	parsed, err := url.Parse(checkoutURL)
+	if err != nil {
+		return checkoutURL
+	}
+	query := parsed.Query()
+	query.Set("lang", normalized)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func normalizeCheckoutLocale(locale string) string {
+	normalized := strings.ToLower(strings.TrimSpace(locale))
+	if strings.HasPrefix(normalized, "zh") {
+		return "zh"
+	}
+	if normalized == "en" || strings.HasPrefix(normalized, "en-") {
+		return "en"
+	}
+	return ""
 }
 
 func ConfInit() {

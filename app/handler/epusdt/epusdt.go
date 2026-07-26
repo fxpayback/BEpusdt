@@ -42,6 +42,7 @@ type createOrderReq struct {
 	Fiat        model.Fiat `json:"fiat"`
 	Currencies  string     `json:"currencies"`
 	Timeout     int64      `json:"timeout"`
+	Locale      string     `json:"locale"`
 }
 
 type updateOrderReq struct {
@@ -164,7 +165,7 @@ func (Epusdt) CreateOrder(ctx *gin.Context) {
 		"status":          order.Status,
 		"amount":          order.Money,
 		"expiration_time": uint64(order.ExpiredAt.Sub(time.Now()).Seconds()),
-		"payment_url":     model.CheckoutUrl(host, order.TradeId),
+		"payment_url":     model.CheckoutURLWithLocale(host, order.TradeId, req.Locale),
 		"network":         order.GetMethods(""),
 		"reselect":        order.CanReselectPayment(),
 	}))
