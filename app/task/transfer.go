@@ -148,6 +148,9 @@ func orderTransferMatch(o model.Order, t transfer) bool {
 	if !o.CreatedAt.Before(t.Timestamp) || !o.ExpiredAt.After(t.Timestamp) {
 		return false
 	}
+	if o.Status == model.OrderStatusCanceled && o.UpdatedAt != nil && !t.Timestamp.Before(o.UpdatedAt.Time()) {
+		return false
+	}
 
 	return true
 }
@@ -260,7 +263,7 @@ func markFinalConfirmed(o model.Order) {
 }
 
 func receivableOrderStatuses() []int {
-	return []int{model.OrderStatusWaiting, model.OrderStatusExpired}
+	return []int{model.OrderStatusWaiting, model.OrderStatusExpired, model.OrderStatusCanceled}
 }
 
 func getReceivableOrders() map[string][]model.Order {

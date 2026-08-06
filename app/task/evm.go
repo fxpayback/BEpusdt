@@ -3,6 +3,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -317,7 +318,10 @@ func (e *evm) parseNativeTransfer(array []gjson.Result, num int, timestamp time.
 
 func (e *evm) parseEventTransfer(b evmBlock, timestamp map[string]time.Time) ([]transfer, error) {
 	transfers := make([]transfer, 0)
-	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","method":"eth_getLogs","params":[{"fromBlock":"0x%x","toBlock":"0x%x","topics":["%s"]}],"id":1}`, b.From, b.To, evmTransferEvent))
+	post, err := e.eventTransferRequest(b)
+	if err != nil {
+		return transfers, errors.Join(errors.New("eth_getLogs Marshal Error"), err)
+	}
 	resp, err := e.Client.Post(e.rpcEndpoint(), "application/json", bytes.NewBuffer(post))
 	if err != nil {
 
@@ -378,6 +382,24 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[string]time.Time) ([]
 	}
 
 	return transfers, nil
+}
+
+func (e *evm) eventTransferRequest(b evmBlock) ([]byte, error) {
+	filter := map[string]any{
+		"fromBlock": fmt.Sprintf("0x%x", b.From),
+		"toBlock":   fmt.Sprintf("0x%x", b.To),
+		"topics":    []string{evmTransferEvent},
+	}
+	if contracts := model.GetNetworkContracts(model.Network(e.Network)); len(contracts) > 0 {
+		filter["address"] = contracts
+	}
+
+	return json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "eth_getLogs",
+		"params":  []any{filter},
+		"id":      1,
+	})
 }
 
 func (e *evm) tradeConfirmHandle(ctx context.Context) {

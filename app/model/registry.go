@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/shopspring/decimal"
@@ -368,6 +369,20 @@ func GetNetworkTrades(n Network) []TradeType {
 	}
 
 	return list
+}
+
+func GetNetworkContracts(n Network) []string {
+	contracts := make([]string, 0)
+	for _, tradeType := range GetNetworkTrades(n) {
+		config, ok := registry[tradeType]
+		if !ok || config.Contract == "" {
+			continue
+		}
+		contracts = append(contracts, config.Contract)
+	}
+	sort.Strings(contracts)
+
+	return contracts
 }
 
 func GetContractTrade(addr string) (TradeType, bool) {

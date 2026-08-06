@@ -33,7 +33,7 @@ var defaultConf = map[ConfKey]string{
 	PaymentMinAmount:        "0.01",
 	PaymentMaxAmount:        "99999",
 	RpcEndpointTron:         "grpc.trongrid.io:50051",
-	RpcEndpointBsc:          "https://binance-smart-chain-public.nodies.app/",
+	RpcEndpointBsc:          "https://bsc-mainnet.public.blastapi.io/",
 	RpcEndpointSolana:       "https://solana-rpc.publicnode.com/",
 	RpcEndpointXlayer:       "https://xlayerrpc.okx.com/",
 	RpcEndpointPolygon:      "https://polygon-public.nodies.app/",
