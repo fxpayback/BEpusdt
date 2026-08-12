@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
@@ -33,6 +34,13 @@ type solana struct {
 	lastSlotNum         int
 	slotQueue           *chanx.UnboundedChan[int]
 	client              *http.Client
+	retryMu             sync.Mutex
+	retryAttempts       map[int]int
+	retryPending        map[int]bool
+	retryTimers         map[int]*time.Timer
+	retryDelays         []time.Duration
+	recordSuccess       func(string, string)
+	recordFailure       func(string)
 }
 
 type solanaTokenOwner struct {
@@ -56,6 +64,12 @@ func newSolana() solana {
 		lastSlotNum:         0,
 		slotQueue:           chanx.NewUnboundedChan[int](context.Background(), 30),
 		client:              utils.NewHttpClient(),
+		retryAttempts:       make(map[int]int),
+		retryPending:        make(map[int]bool),
+		retryTimers:         make(map[int]*time.Timer),
+		retryDelays:         []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second},
+		recordSuccess:       conf.RecordSuccess,
+		recordFailure:       conf.RecordFailure,
 	}
 }
 
@@ -144,38 +158,98 @@ func (s *solana) slotDispatch(ctx context.Context) {
 
 func (s *solana) slotParse(n any) {
 	slot := n.(int)
-	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[%d,{"encoding":"json","maxSupportedTransactionVersion":0,"transactionDetails":"full","rewards":false}]}`, slot))
 	network := conf.Solana
 
-	conf.RecordSuccess(network, cast.ToString(slot))
+	body, timestamp, err := s.fetchSolanaBlock(slot)
+	if err != nil {
+		s.recordFailure(network)
+		retryScheduled := s.scheduleRetry(slot)
+		log.Task.Warn("slotParse Error fetching block:", err)
+		if !retryScheduled {
+			log.Task.Warn("slotParse retry burst exhausted for slot:", slot)
+		}
+
+		return
+	}
+
+	transfers, err := s.parseSolanaBlock(slot, body, timestamp)
+	if err != nil {
+		s.recordFailure(network)
+		retryScheduled := s.scheduleRetry(slot)
+		log.Task.Warn("slotParse Error parsing block:", err)
+		if !retryScheduled {
+			log.Task.Warn("slotParse retry burst exhausted for slot:", slot)
+		}
+
+		return
+	}
+
+	s.recordSuccess(network, cast.ToString(slot))
+	s.clearRetry(slot)
+	for _, result := range transfers {
+		if len(result) > 0 {
+			transferQueue.In <- result
+		}
+	}
+
+	log.Task.Info(fmt.Sprintf("区块扫描完成(Solana) %d 成功率：%s", slot, conf.GetSuccessRate(network)))
+}
+
+type solanaBlockResult struct {
+	BlockTime    *int64          `json:"blockTime"`
+	Transactions json.RawMessage `json:"transactions"`
+}
+
+type solanaRPCResponse struct {
+	Error  json.RawMessage  `json:"error"`
+	Result *json.RawMessage `json:"result"`
+}
+
+func (s *solana) fetchSolanaBlock(slot int) ([]byte, time.Time, error) {
+	post := []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"getBlock","params":[%d,{"encoding":"json","maxSupportedTransactionVersion":0,"transactionDetails":"full","rewards":false}]}`, slot))
 	resp, err := s.client.Post(model.Endpoint(conf.Solana), "application/json", bytes.NewBuffer(post))
 	if err != nil {
-		conf.RecordFailure(network)
-		log.Task.Warn("slotParse Error sending request:", err)
-
-		return
+		return nil, time.Time{}, err
 	}
-
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		conf.RecordFailure(network)
-		log.Task.Warn("slotParse Error response status code:", resp.StatusCode)
-
-		return
+	if resp.StatusCode != http.StatusOK {
+		return nil, time.Time{}, fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)
 	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		conf.RecordFailure(network)
-		s.slotQueue.In <- slot
-		log.Task.Warn("slotParse Error reading response body:", err)
-
-		return
+		return nil, time.Time{}, err
 	}
+	var envelope solanaRPCResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, time.Time{}, fmt.Errorf("invalid JSON-RPC response: %w", err)
+	}
+	if len(envelope.Error) > 0 && string(envelope.Error) != "null" {
+		return nil, time.Time{}, fmt.Errorf("JSON-RPC error: %s", string(envelope.Error))
+	}
+	if envelope.Result == nil || string(*envelope.Result) == "null" {
+		return nil, time.Time{}, fmt.Errorf("JSON-RPC result is null")
+	}
+	var block solanaBlockResult
+	if err := json.Unmarshal(*envelope.Result, &block); err != nil {
+		return nil, time.Time{}, fmt.Errorf("invalid block result: %w", err)
+	}
+	if block.BlockTime == nil || *block.BlockTime <= 0 {
+		return nil, time.Time{}, fmt.Errorf("missing or invalid blockTime")
+	}
+	if len(block.Transactions) == 0 || !gjson.ParseBytes(block.Transactions).IsArray() {
+		return nil, time.Time{}, fmt.Errorf("missing or invalid transactions")
+	}
+	return body, time.Unix(*block.BlockTime, 0), nil
+}
 
-	timestamp := time.Unix(gjson.GetBytes(body, "result.blockTime").Int(), 0)
+func (s *solana) parseSolanaBlock(slot int, body []byte, timestamp time.Time) ([][]transfer, error) {
+	result := gjson.GetBytes(body, "result")
+	if !result.Exists() || !result.IsObject() {
+		return nil, fmt.Errorf("missing block result")
+	}
+	transfers := make([][]transfer, 0)
 
-	for _, trans := range gjson.GetBytes(body, "result.transactions").Array() {
+	for _, trans := range result.Get("transactions").Array() {
 		hash := trans.Get("transaction.signatures.0").String()
 
 		// 解析账号索引
@@ -263,11 +337,55 @@ func (s *solana) slotParse(n any) {
 		}
 
 		if len(result) > 0 {
-			transferQueue.In <- result
+			transfers = append(transfers, result)
 		}
 	}
+	return transfers, nil
+}
 
-	log.Task.Info(fmt.Sprintf("区块扫描完成(Solana) %d 成功率：%s", slot, conf.GetSuccessRate(network)))
+func (s *solana) clearRetry(slot int) {
+	s.retryMu.Lock()
+	if timer := s.retryTimers[slot]; timer != nil {
+		timer.Stop()
+	}
+	delete(s.retryAttempts, slot)
+	delete(s.retryPending, slot)
+	delete(s.retryTimers, slot)
+	s.retryMu.Unlock()
+}
+
+func (s *solana) scheduleRetry(slot int) bool {
+	s.retryMu.Lock()
+	if s.retryPending[slot] {
+		s.retryMu.Unlock()
+		return true
+	}
+	attempt := s.retryAttempts[slot]
+	if attempt >= len(s.retryDelays) {
+		delete(s.retryAttempts, slot)
+		delete(s.retryPending, slot)
+		delete(s.retryTimers, slot)
+		s.retryMu.Unlock()
+		return false
+	}
+	delay := s.retryDelays[attempt]
+	s.retryAttempts[slot] = attempt + 1
+	s.retryPending[slot] = true
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		s.retryMu.Lock()
+		if s.retryTimers[slot] != timer {
+			s.retryMu.Unlock()
+			return
+		}
+		delete(s.retryPending, slot)
+		delete(s.retryTimers, slot)
+		s.retryMu.Unlock()
+		s.slotQueue.In <- slot
+	})
+	s.retryTimers[slot] = timer
+	s.retryMu.Unlock()
+	return true
 }
 
 func (s *solana) parseTransfer(instr gjson.Result, accountKeys []string, tokenAccountMap map[string]solanaTokenOwner) transfer {
