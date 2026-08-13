@@ -24,6 +24,7 @@ func bscInit() {
 		},
 		Client:         utils.NewHttpClient(),
 		blockScanQueue: chanx.NewUnboundedChan[evmBlock](ctx, 30),
+		RPCEndpoints:   []string{model.GetC(model.RpcEndpointBsc), model.GetC(model.RpcEndpointBscFallback)},
 	}
 
 	Register(Task{Callback: bsc.blockDispatch})

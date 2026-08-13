@@ -19,44 +19,47 @@ import (
 
 var confCache sync.Map
 var defaultConf = map[ConfKey]string{
-	ApiAppUri:               "",
-	ApiMerchantTokens:       "{}",
-	RateSyncInterval:        "3600",
-	RateSyncMaxAge:          "900",
-	AtomUSDT:                "0.01",
-	AtomUSDC:                "0.01",
-	AtomTRX:                 "0.01",
-	AtomBNB:                 "0.00001",
-	AtomETH:                 "0.000001",
-	AtomGRAM:                "0.01",
-	MonitorMinAmount:        "0.01",
-	PaymentMinAmount:        "0.01",
-	PaymentMaxAmount:        "99999",
-	RpcEndpointTron:         "grpc.trongrid.io:50051",
-	RpcEndpointBsc:          "https://bsc-mainnet.public.blastapi.io/",
-	RpcEndpointSolana:       "https://solana-rpc.publicnode.com/",
-	RpcEndpointXlayer:       "https://xlayerrpc.okx.com/",
-	RpcEndpointPolygon:      "https://polygon-public.nodies.app/",
-	RpcEndpointArbitrum:     "https://arb1.arbitrum.io/rpc",
-	RpcEndpointEthereum:     "https://ethereum-public.nodies.app/",
-	RpcEndpointBase:         "https://base-public.nodies.app/",
-	RpcEndpointAptos:        "https://aptos-rest.publicnode.com/",
-	RpcEndpointPlasma:       "https://rpc.plasma.to/",
-	RpcGlobalConfigUrlTon:   "https://ton.org/global-config.json",
-	NotifyMaxRetry:          "10",
-	BlockHeightMaxDiff:      "1000",
-	BlockOffsetConfirm:      "0",
-	PaymentTimeout:          "1200",     // 20分钟
-	PaymentCheckout:         "official", // 官方模板
-	PaymentMatchMode:        string(Classic),
-	PaymentSupportUrl:       "",
-	PaymentLookbackHour:     "3",
-	PaymentNetworkSort:      "",
-	SystemInstallLock:       "0",
-	RateSyncCoingeckoApiUrl: "https://api.coingecko.com",
-	RateSyncHistoryDays:     "30",
-	MqttTopicPrefix:         "bepusdt",
-	HomeRedirectUrl:         "",
+	ApiAppUri:                            "",
+	ApiMerchantTokens:                    "{}",
+	RateSyncInterval:                     "3600",
+	RateSyncMaxAge:                       "900",
+	AtomUSDT:                             "0.01",
+	AtomUSDC:                             "0.01",
+	AtomTRX:                              "0.01",
+	AtomBNB:                              "0.00001",
+	AtomETH:                              "0.000001",
+	AtomGRAM:                             "0.01",
+	MonitorMinAmount:                     "0.01",
+	PaymentMinAmount:                     "0.01",
+	PaymentMaxAmount:                     "99999",
+	RpcEndpointTron:                      "grpc.trongrid.io:50051",
+	RpcEndpointBsc:                       "https://bsc-mainnet.public.blastapi.io/",
+	RpcEndpointBscFallback:               "https://1rpc.io/bnb",
+	RpcEndpointSolana:                    "https://solana-rpc.publicnode.com/",
+	RpcEndpointXlayer:                    "https://xlayerrpc.okx.com/",
+	RpcEndpointPolygon:                   "https://polygon-public.nodies.app/",
+	RpcEndpointArbitrum:                  "https://arb1.arbitrum.io/rpc",
+	RpcEndpointEthereum:                  "https://ethereum-public.nodies.app/",
+	RpcEndpointBase:                      "https://base-public.nodies.app/",
+	RpcEndpointAptos:                     "https://aptos-rest.publicnode.com/",
+	RpcEndpointPlasma:                    "https://rpc.plasma.to/",
+	RpcGlobalConfigUrlTon:                "https://ton.org/global-config.json",
+	NotifyMaxRetry:                       "10",
+	BlockHeightMaxDiff:                   "1000",
+	BlockOffsetConfirm:                   "0",
+	PaymentTimeout:                       "1200",     // 20分钟
+	PaymentCheckout:                      "official", // 官方模板
+	PaymentMatchMode:                     string(Classic),
+	PaymentSupportUrl:                    "",
+	PaymentLookbackHour:                  "3",
+	PaymentReconciliationLookbackHour:    "0",
+	PaymentReconciliationExcludeOrderIDs: "",
+	PaymentNetworkSort:                   "",
+	SystemInstallLock:                    "0",
+	RateSyncCoingeckoApiUrl:              "https://api.coingecko.com",
+	RateSyncHistoryDays:                  "30",
+	MqttTopicPrefix:                      "bepusdt",
+	HomeRedirectUrl:                      "",
 }
 
 type Conf struct {
@@ -329,4 +332,15 @@ func GetLookbackHour() time.Duration {
 	var num = cast.ToInt(GetC(PaymentLookbackHour))
 
 	return time.Duration(num) * hour
+}
+
+// GetReconciliationLookbackHour returns the bounded window used to recover
+// transfers that were mined during an order's payment window but observed
+// only after the normal lookback elapsed.
+func GetReconciliationLookbackHour() time.Duration {
+	num := cast.ToInt(GetC(PaymentReconciliationLookbackHour))
+	if num <= 0 {
+		return 0
+	}
+	return -time.Duration(num) * time.Hour
 }

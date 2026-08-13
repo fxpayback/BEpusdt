@@ -119,6 +119,7 @@ func (Conf) Rpc(ctx *gin.Context) {
 	var keys = []model.ConfKey{
 		model.RpcEndpointPlasma,
 		model.RpcEndpointBsc,
+		model.RpcEndpointBscFallback,
 		model.RpcEndpointSolana,
 		model.RpcEndpointXlayer,
 		model.RpcEndpointPolygon,

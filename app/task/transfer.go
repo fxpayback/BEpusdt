@@ -42,8 +42,13 @@ var resourceQueue = chanx.NewUnboundedChan[[]resource](context.Background(), 30)
 var notOrderQueue = chanx.NewUnboundedChan[[]transfer](context.Background(), 30) // 非订单队列
 var transferQueue = chanx.NewUnboundedChan[[]transfer](context.Background(), 30) // 交易转账队列
 
-// lookbackDone 记录已触发过回溯的订单 ID，每个订单只回溯一次。
-var lookbackDone sync.Map // key: int64 order ID, value: struct{}
+// lookbackAttempt throttles repeated scans; queued work is not treated as complete.
+var lookbackAttempt sync.Map // key: int64 order ID, value: time.Time
+
+const (
+	normalLookbackThrottle         = 2 * time.Minute
+	reconciliationLookbackThrottle = 6 * time.Hour
+)
 
 const batchInterval = time.Second * 1       // 批处理缓解数据库读取压力
 const orderCheckInterval = time.Second * 10 // 订单过期检查间隔
@@ -258,7 +263,24 @@ func tronResourceHandle(ctx context.Context) {
 }
 
 func markFinalConfirmed(o model.Order) {
-	o.SetSuccess()
+	if strings.TrimSpace(o.RefHash) == "" || o.RefBlockNum <= 0 || o.ConfirmedAt == nil || o.ConfirmedAt.IsZero() {
+		log.Task.Warn(fmt.Sprintf("settlement rejected provider_order_id=%d reason=missing_chain_metadata", o.ID))
+		return
+	}
+
+	result := model.Db.Model(&model.Order{}).
+		Where("id = ? and status = ? and ref_hash = ?", o.ID, model.OrderStatusConfirming, o.RefHash).
+		Update("status", model.OrderStatusSuccess)
+	if result.Error != nil {
+		log.Task.Warn("mark order successful failed:", result.Error)
+		return
+	}
+	if result.RowsAffected != 1 {
+		return
+	}
+
+	o.Status = model.OrderStatusSuccess
+	log.Task.Info(fmt.Sprintf("order transition provider_order_id=%d from=%d to=%d block=%d has_tx_hash=true", o.ID, model.OrderStatusConfirming, model.OrderStatusSuccess, o.RefBlockNum))
 	notifyOrderSuccess(o)
 }
 
@@ -268,13 +290,19 @@ func receivableOrderStatuses() []int {
 
 func getReceivableOrders() map[string][]model.Order {
 	var orders []model.Order
+	now := time.Now()
+	normalCutoff, reconciliationCutoff := receivableCutoffs(now)
 	db := model.Db.Where("status in (?)", receivableOrderStatuses()).
-		Where("expired_at > ?", time.Now().Add(model.GetLookbackHour())).
+		Where("expired_at > ?", earlierTime(normalCutoff, reconciliationCutoff)).
 		Order("created_at asc")
 	db.Find(&orders)
 
 	data := make(map[string][]model.Order)
+	excluded := reconciliationExcludedOrderIDs(model.GetC(model.PaymentReconciliationExcludeOrderIDs))
 	for _, t := range orders {
+		if !receivableOrderEligible(t, normalCutoff, reconciliationCutoff, excluded) {
+			continue
+		}
 		key := orderMatchAddress(t) + string(t.TradeType)
 		data[key] = append(data[key], t)
 	}
@@ -283,17 +311,25 @@ func getReceivableOrders() map[string][]model.Order {
 }
 
 func hasLookbackOrders(tradeType []model.TradeType) bool {
-	var count int64
+	now := time.Now()
+	normalCutoff, reconciliationCutoff := receivableCutoffs(now)
+	var orders []model.Order
 	db := model.Db.Model(&model.Order{}).
 		Where("status in (?)", receivableOrderStatuses()).
-		Where("expired_at > ?", time.Now().Add(model.GetLookbackHour()))
+		Where("expired_at > ?", earlierTime(normalCutoff, reconciliationCutoff))
 	if len(tradeType) > 0 {
 		db = db.Where("trade_type in (?)", tradeType)
 	}
+	db.Find(&orders)
 
-	db.Count(&count)
+	excluded := reconciliationExcludedOrderIDs(model.GetC(model.PaymentReconciliationExcludeOrderIDs))
+	for _, order := range orders {
+		if receivableOrderEligible(order, normalCutoff, reconciliationCutoff, excluded) {
+			return true
+		}
+	}
 
-	return count > 0
+	return false
 }
 
 func getLookbackUnix(network model.Network) (startAt, endAt int64, ok bool) {
@@ -302,20 +338,31 @@ func getLookbackUnix(network model.Network) (startAt, endAt int64, ok bool) {
 		return
 	}
 
-	lookback := time.Now().Add(model.GetLookbackHour())
+	now := time.Now()
+	normalCutoff, reconciliationCutoff := receivableCutoffs(now)
 	var all []model.Order
 	model.Db.Model(&model.Order{}).
 		Where("status in (?) and trade_type in (?)", receivableOrderStatuses(), trade).
-		Where("expired_at > ?", lookback).
+		Where("expired_at > ?", earlierTime(normalCutoff, reconciliationCutoff)).
 		Order("created_at asc").
 		Find(&all)
 
-	// 过滤掉已经回溯过的订单
+	excluded := reconciliationExcludedOrderIDs(model.GetC(model.PaymentReconciliationExcludeOrderIDs))
 	pending := make([]model.Order, 0, len(all))
 	for _, o := range all {
-		if _, done := lookbackDone.Load(o.ID); !done {
-			pending = append(pending, o)
+		if !receivableOrderEligible(o, normalCutoff, reconciliationCutoff, excluded) {
+			continue
 		}
+		throttle := normalLookbackThrottle
+		if !o.ExpiredAt.After(normalCutoff) {
+			throttle = reconciliationLookbackThrottle
+		}
+		if value, found := lookbackAttempt.Load(o.ID); found {
+			if attemptedAt, valid := value.(time.Time); valid && now.Sub(attemptedAt) < throttle {
+				continue
+			}
+		}
+		pending = append(pending, o)
 	}
 	if len(pending) == 0 {
 		return
@@ -325,21 +372,73 @@ func getLookbackUnix(network model.Network) (startAt, endAt int64, ok bool) {
 	startAt = pending[0].CreatedAt.Time().Unix()
 
 	// 终点：最晚的已过期 expired_at；若全部尚未过期则用当前时间
-	endAt = time.Now().Unix()
+	endAt = startAt
+	needsCurrentTip := false
 	for _, o := range pending {
-		if o.ExpiredAt.Before(time.Now()) && o.ExpiredAt.Unix() > startAt {
+		if !o.ExpiredAt.Before(now) {
+			needsCurrentTip = true
+		}
+		if o.ExpiredAt.Unix() > endAt {
 			endAt = o.ExpiredAt.Unix()
 		}
+	}
+	if needsCurrentTip {
+		endAt = now.Unix()
 	}
 
 	ok = true
 
-	// 标记这批订单已回溯，后续不再重复触发
+	// This is only an attempt timestamp, not reconciliation completion.
 	for _, o := range pending {
-		lookbackDone.Store(o.ID, struct{}{})
+		lookbackAttempt.Store(o.ID, now)
 	}
 
 	return
+}
+
+func receivableCutoffs(now time.Time) (time.Time, time.Time) {
+	normalCutoff := now.Add(model.GetLookbackHour())
+	reconciliationLookback := model.GetReconciliationLookbackHour()
+	if reconciliationLookback == 0 {
+		return normalCutoff, time.Time{}
+	}
+	return normalCutoff, now.Add(reconciliationLookback)
+}
+
+func earlierTime(a, b time.Time) time.Time {
+	if b.IsZero() {
+		return a
+	}
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func reconciliationExcludedOrderIDs(raw string) map[string]struct{} {
+	excluded := make(map[string]struct{})
+	for _, orderID := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	}) {
+		orderID = strings.TrimSpace(orderID)
+		if orderID != "" {
+			excluded[orderID] = struct{}{}
+		}
+	}
+	return excluded
+}
+
+func receivableOrderEligible(order model.Order, normalCutoff, reconciliationCutoff time.Time, excluded map[string]struct{}) bool {
+	if _, found := excluded[strings.TrimSpace(order.OrderId)]; found {
+		return false
+	}
+	if order.ExpiredAt.After(normalCutoff) {
+		return true
+	}
+	return !reconciliationCutoff.IsZero() &&
+		order.Status == model.OrderStatusExpired &&
+		order.TradeType == model.UsdtBep20 &&
+		order.ExpiredAt.After(reconciliationCutoff)
 }
 
 func expireWaitingOrders() {

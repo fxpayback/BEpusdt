@@ -49,15 +49,17 @@ const (
 	AtomETH  ConfKey = "atom_eth"
 	AtomGRAM ConfKey = "atom_gram"
 
-	MonitorMinAmount    ConfKey = "monitor_min_amount" // 监控最小金额，低于此金额的入账不进行通知
-	PaymentMinAmount    ConfKey = "payment_min_amount"
-	PaymentMaxAmount    ConfKey = "payment_max_amount"
-	PaymentTimeout      ConfKey = "payment_timeout"       // 订单支付超时时间，单位秒
-	PaymentCheckout     ConfKey = "payment_checkout"      // 收银台模板
-	PaymentMatchMode    ConfKey = "payment_match_mode"    // 订单金额匹配模式
-	PaymentSupportUrl   ConfKey = "payment_support_url"   // 订单支付客服链接
-	PaymentLookbackHour ConfKey = "payment_lookback_hour" // 订单回溯时间
-	PaymentNetworkSort  ConfKey = "payment_network_sort"  // 收银台网络顺序，逗号分隔
+	MonitorMinAmount                     ConfKey = "monitor_min_amount" // 监控最小金额，低于此金额的入账不进行通知
+	PaymentMinAmount                     ConfKey = "payment_min_amount"
+	PaymentMaxAmount                     ConfKey = "payment_max_amount"
+	PaymentTimeout                       ConfKey = "payment_timeout"                          // 订单支付超时时间，单位秒
+	PaymentCheckout                      ConfKey = "payment_checkout"                         // 收银台模板
+	PaymentMatchMode                     ConfKey = "payment_match_mode"                       // 订单金额匹配模式
+	PaymentSupportUrl                    ConfKey = "payment_support_url"                      // 订单支付客服链接
+	PaymentLookbackHour                  ConfKey = "payment_lookback_hour"                    // 订单回溯时间
+	PaymentReconciliationLookbackHour    ConfKey = "payment_reconciliation_lookback_hour"     // 过期订单补偿回溯时间
+	PaymentReconciliationExcludeOrderIDs ConfKey = "payment_reconciliation_exclude_order_ids" // 不参与过期订单补偿的商户订单号，逗号分隔
+	PaymentNetworkSort                   ConfKey = "payment_network_sort"                     // 收银台网络顺序，逗号分隔
 
 	RpcEndpointPlasma         ConfKey = "rpc_endpoint_plasma"            // Plasma RPC节点
 	RpcEndpointBsc            ConfKey = "rpc_endpoint_bsc"               // BSC RPC节点
@@ -71,6 +73,7 @@ const (
 	RpcEndpointTron           ConfKey = "rpc_endpoint_tron"              // TRON RPC节点
 	RpcEndpointTronGridApiKey ConfKey = "rpc_endpoint_tron_grid_api_key" // TRON RPC节点 TronGrid Api Key
 	RpcGlobalConfigUrlTon     ConfKey = "rpc_global_config_url_ton"      // Ton Global Config Url
+	RpcEndpointBscFallback    ConfKey = "rpc_endpoint_bsc_fallback"      // BSC备用RPC节点
 
 	RateSyncCoingeckoApiUrl ConfKey = "rate_sync_coingecko_api_url" // 汇率同步 Coingecko Api URL
 	RateSyncCoingeckoApiKey ConfKey = "rate_sync_coingecko_api_key" // 汇率同步 Coingecko Api Key
