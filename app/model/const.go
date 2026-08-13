@@ -52,14 +52,14 @@ const (
 	MonitorMinAmount                     ConfKey = "monitor_min_amount" // 监控最小金额，低于此金额的入账不进行通知
 	PaymentMinAmount                     ConfKey = "payment_min_amount"
 	PaymentMaxAmount                     ConfKey = "payment_max_amount"
-	PaymentTimeout                       ConfKey = "payment_timeout"                          // 订单支付超时时间，单位秒
-	PaymentCheckout                      ConfKey = "payment_checkout"                         // 收银台模板
-	PaymentMatchMode                     ConfKey = "payment_match_mode"                       // 订单金额匹配模式
-	PaymentSupportUrl                    ConfKey = "payment_support_url"                      // 订单支付客服链接
-	PaymentLookbackHour                  ConfKey = "payment_lookback_hour"                    // 订单回溯时间
-	PaymentReconciliationLookbackHour    ConfKey = "payment_reconciliation_lookback_hour"     // 过期订单补偿回溯时间
-	PaymentReconciliationExcludeOrderIDs ConfKey = "payment_reconciliation_exclude_order_ids" // 不参与过期订单补偿的商户订单号，逗号分隔
-	PaymentNetworkSort                   ConfKey = "payment_network_sort"                     // 收银台网络顺序，逗号分隔
+	PaymentTimeout                       ConfKey = "payment_timeout"                 // 订单支付超时时间，单位秒
+	PaymentCheckout                      ConfKey = "payment_checkout"                // 收银台模板
+	PaymentMatchMode                     ConfKey = "payment_match_mode"              // 订单金额匹配模式
+	PaymentSupportUrl                    ConfKey = "payment_support_url"             // 订单支付客服链接
+	PaymentLookbackHour                  ConfKey = "payment_lookback_hour"           // 订单回溯时间
+	PaymentReconciliationLookbackHour    ConfKey = "payment_recon_lookback_hour"     // 过期订单补偿回溯时间
+	PaymentReconciliationExcludeOrderIDs ConfKey = "payment_recon_exclude_order_ids" // 不参与过期订单补偿的商户订单号，逗号分隔
+	PaymentNetworkSort                   ConfKey = "payment_network_sort"            // 收银台网络顺序，逗号分隔
 
 	RpcEndpointPlasma         ConfKey = "rpc_endpoint_plasma"            // Plasma RPC节点
 	RpcEndpointBsc            ConfKey = "rpc_endpoint_bsc"               // BSC RPC节点

@@ -117,3 +117,9 @@ func TestEarlierTimeUsesNormalCutoffWhenReconciliationDisabled(t *testing.T) {
 		t.Fatalf("disabled reconciliation cutoff = %v, want normal cutoff %v", got, normal)
 	}
 }
+
+func TestReconciliationConfigKeysFitDatabaseColumn(t *testing.T) {
+	if len(model.PaymentReconciliationLookbackHour) > 32 || len(model.PaymentReconciliationExcludeOrderIDs) > 32 {
+		t.Fatalf("reconciliation config key exceeds bep_conf.k limit: %q, %q", model.PaymentReconciliationLookbackHour, model.PaymentReconciliationExcludeOrderIDs)
+	}
+}
