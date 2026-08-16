@@ -311,6 +311,11 @@ func (e *evm) parseNativeTransfer(array []gjson.Result, num int, timestamp time.
 
 func (e *evm) parseEventTransfer(b evmBlock, timestamp map[string]time.Time) ([]transfer, error) {
 	transfers := make([]transfer, 0)
+	// Avoid an unfiltered eth_getLogs request on networks without configured
+	// token contracts. Hash submission does not disable continuous scanning.
+	if len(model.GetNetworkScanContracts(model.Network(e.Network))) == 0 {
+		return transfers, nil
+	}
 	post, err := e.eventTransferRequest(b)
 	if err != nil {
 		return transfers, errors.Join(errors.New("eth_getLogs Marshal Error"), err)
@@ -363,6 +368,7 @@ func (e *evm) parseEventTransfer(b evmBlock, timestamp map[string]time.Time) ([]
 			BlockNum:    blockNumber,
 			Timestamp:   timestamp[itm.Get("blockNumber").String()],
 			TradeType:   tradeType,
+			ReceiptKey:  evmReceiptKey(e.Network, itm.Get("transactionHash").String(), itm.Get("logIndex").String()),
 		})
 	}
 
@@ -375,7 +381,7 @@ func (e *evm) eventTransferRequest(b evmBlock) ([]byte, error) {
 		"toBlock":   fmt.Sprintf("0x%x", b.To),
 		"topics":    []string{evmTransferEvent},
 	}
-	if contracts := model.GetNetworkContracts(model.Network(e.Network)); len(contracts) > 0 {
+	if contracts := model.GetNetworkScanContracts(model.Network(e.Network)); len(contracts) > 0 {
 		filter["address"] = contracts
 	}
 
@@ -392,6 +398,21 @@ func (e *evm) tradeConfirmHandle(ctx context.Context) {
 	var wg sync.WaitGroup
 
 	var handle = func(o model.Order) {
+		if model.HashSubmissionEnabled(o.TradeType) {
+			result, err := e.inspectSubmittedTransaction(ctx, o, o.RefHash)
+			if err != nil || result.State != SubmittedTransactionConfirmed {
+				return
+			}
+			if o.RefReceiptKey == "" {
+				if err := o.ClaimConfirmingReceipt(result.ReceiptKey); err != nil {
+					return
+				}
+			} else if result.ReceiptKey != o.RefReceiptKey {
+				return
+			}
+			markFinalConfirmed(o)
+			return
+		}
 		if model.GetC(model.BlockOffsetConfirm) == "1" {
 			last, ok := chainBlockNum.Load(e.Network)
 			if !ok {
@@ -600,11 +621,13 @@ func syncBreak(network string, num int) bool {
 		return true
 	}
 
+	// Explicit MQTT monitoring still owns its stream. Hash verification is only
+	// a recovery path and therefore never suppresses normal block scans.
 	if mqttSubscribed(network) {
 		return false
 	}
 
-	trades := model.GetNetworkTrades(model.Network(network))
+	trades := model.GetNetworkScanTrades(model.Network(network))
 	if len(trades) == 0 {
 
 		return true

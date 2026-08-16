@@ -362,6 +362,11 @@ func GetAllTradeConfig() map[string]TradeTypeConf {
 	return config
 }
 
+func GetTradeConfig(t TradeType) (TradeTypeConf, bool) {
+	config, ok := registry[t]
+	return config, ok
+}
+
 func GetNetworkTrades(n Network) []TradeType {
 	list, ok := networkTradesMap[n]
 	if !ok {
@@ -369,6 +374,32 @@ func GetNetworkTrades(n Network) []TradeType {
 	}
 
 	return list
+}
+
+// GetNetworkScanTrades is intentionally independent from hash submission.
+// Transaction-hash verification is a recovery path; normal wallet scanning
+// must remain active for every configured trade on the network.
+func GetNetworkScanTrades(n Network) []TradeType {
+	return GetNetworkTrades(n)
+}
+
+func HashSubmissionEnabled(t TradeType) bool {
+	return configuredTradeTypeEnabled(PaymentHashSubmitTypes, t)
+}
+
+func UniqueAmountEnabled(t TradeType) bool {
+	return configuredTradeTypeEnabled(PaymentUniqueAmountTypes, t)
+}
+
+func configuredTradeTypeEnabled(key ConfKey, t TradeType) bool {
+	for _, raw := range strings.FieldsFunc(GetC(key), func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	}) {
+		if TradeType(strings.ToLower(strings.TrimSpace(raw))) == t {
+			return true
+		}
+	}
+	return false
 }
 
 func GetNetworkContracts(n Network) []string {
@@ -382,6 +413,19 @@ func GetNetworkContracts(n Network) []string {
 	}
 	sort.Strings(contracts)
 
+	return contracts
+}
+
+func GetNetworkScanContracts(n Network) []string {
+	contracts := make([]string, 0)
+	for _, tradeType := range GetNetworkScanTrades(n) {
+		config, ok := registry[tradeType]
+		if !ok || config.Contract == "" {
+			continue
+		}
+		contracts = append(contracts, config.Contract)
+	}
+	sort.Strings(contracts)
 	return contracts
 }
 

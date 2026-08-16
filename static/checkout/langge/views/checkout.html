@@ -224,13 +224,23 @@
                             </div>
                             <div>
                                 <span>02</span>
-                                <p id="amountInstruction" data-i18n="instruction.amount">精准转入金额</p>
+                                <p id="amountInstruction" data-i18n="instruction.amount">请按页面显示的完整金额转账；BSC/Polygon USDT 或 USDC 包含 5 位小数</p>
                             </div>
                             <div>
                                 <span>03</span>
-                                <p data-i18n="instruction.autoConfirm">转账后保持页面打开，系统会自动确认订单</p>
+                                <p data-i18n="instruction.autoConfirm">转账后保持页面打开，系统会自动检测并确认到账</p>
                             </div>
                         </div>
+
+                        <section class="tx-submit-panel" id="transactionSubmitPanel" hidden>
+                            <label for="transactionHashInput" data-i18n="hash.title">可选恢复：提交交易哈希</label>
+                            <p data-i18n="hash.help">系统通常会自动检测精确到账金额。仅在监控暂时延迟时使用此项，并粘贴钱包或交易所提供的交易哈希。</p>
+                            <div class="tx-submit-row">
+                                <input id="transactionHashInput" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="66" data-i18n-aria="hash.input" aria-label="交易哈希" placeholder="0x...">
+                                <button class="button primary" id="submitTransactionButton" type="button" data-i18n="hash.submit">我已付款</button>
+                            </div>
+                            <small class="tx-submit-status" id="transactionSubmitStatus" aria-live="polite"></small>
+                        </section>
 
                         <div class="action-row edge">
                             <button class="button secondary" id="backToMethodButton" type="button" data-step-target="1" data-i18n="actions.back" hidden>返回上一步</button>

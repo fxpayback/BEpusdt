@@ -1,9 +1,11 @@
 package model
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/url"
 	"sort"
 	"strings"
@@ -84,6 +86,7 @@ type Order struct {
 	NotifyNum         int        `gorm:"column:notify_num;not null;default:0;index:idx_order_notify_retry,priority:3;comment:回调次数" json:"notify_num"`
 	NotifyState       int        `gorm:"column:notify_state;not null;default:0;index:idx_order_notify_retry,priority:2;comment:回调状态 1：成功 0：失败" json:"notify_state"`
 	RefHash           string     `gorm:"column:ref_hash;type:varchar(128);not null;default:'';index;comment:交易哈希" json:"ref_hash"`
+	RefReceiptKey     string     `gorm:"column:ref_receipt_key;type:varchar(192);not null;default:'';index;comment:链上收据唯一键" json:"-"`
 	RefBlockNum       int        `gorm:"column:ref_block_num;not null;default:0;comment:区块索引" json:"ref_block_num"`
 	ExpiredAt         time.Time  `gorm:"column:expired_at;not null;comment:失效时间" json:"expired_at"`
 	ConfirmedAt       *time.Time `gorm:"column:confirmed_at;not null;comment:交易确认时间" json:"confirmed_at"`
@@ -150,18 +153,108 @@ func (o *Order) SetFailed() {
 }
 
 func (o *Order) MarkConfirming(blockNum int, from, hash string, at time.Time, amount decimal.Decimal) error {
-	o.FromAddress = from
-	o.ConfirmedAt = &at
-	o.RefHash = hash
-	o.RefBlockNum = blockNum
-	o.Status = OrderStatusConfirming
+	return o.MarkConfirmingReceipt(blockNum, from, hash, "", at, amount)
+}
+
+var (
+	ErrReceiptAlreadyClaimed = errors.New("blockchain receipt already claimed")
+	ErrOrderStateConflict    = errors.New("order state changed")
+)
+
+// MarkConfirmingReceipt atomically claims an immutable chain receipt before
+// an order can enter settlement. A partial unique database index protects the
+// same receipt from concurrent claims by different orders.
+func (o *Order) MarkConfirmingReceipt(blockNum int, from, hash, receiptKey string, at time.Time, amount decimal.Decimal) error {
+	receiptKey = strings.TrimSpace(receiptKey)
+	values := map[string]any{
+		"from_address":    from,
+		"confirmed_at":    at,
+		"ref_hash":        hash,
+		"ref_block_num":   blockNum,
+		"ref_receipt_key": receiptKey,
+		"status":          OrderStatusConfirming,
+	}
+	amountValue := o.Amount
+	moneyValue := o.Money
 	if o.AddressLocked {
 		rate, _ := decimal.NewFromString(o.Rate)
-		o.Amount = amount.String()
-		o.Money = rate.Mul(amount).String()
+		amountValue = amount.String()
+		moneyValue = rate.Mul(amount).String()
+		values["amount"] = amountValue
+		values["money"] = moneyValue
 	}
 
-	return Db.Save(o).Error
+	query := Db.Model(&Order{}).
+		Where("id = ? and status in (?)", o.ID, []int{OrderStatusWaiting, OrderStatusExpired, OrderStatusCanceled})
+	if receiptKey != "" {
+		query = query.Where("ref_receipt_key = ''")
+	}
+	result := query.Updates(values)
+	if result.Error != nil {
+		if receiptKey != "" {
+			var count int64
+			Db.Model(&Order{}).Where("ref_receipt_key = ? and id <> ?", receiptKey, o.ID).Count(&count)
+			if count > 0 {
+				return ErrReceiptAlreadyClaimed
+			}
+		}
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		o.FromAddress = from
+		o.ConfirmedAt = &at
+		o.RefHash = hash
+		o.RefReceiptKey = receiptKey
+		o.RefBlockNum = blockNum
+		o.Status = OrderStatusConfirming
+		o.Amount = amountValue
+		o.Money = moneyValue
+		return nil
+	}
+
+	var current Order
+	if err := Db.Where("id = ?", o.ID).First(&current).Error; err != nil {
+		return err
+	}
+	if receiptKey != "" && current.RefReceiptKey == receiptKey &&
+		(current.Status == OrderStatusConfirming || current.Status == OrderStatusSuccess) {
+		*o = current
+		return nil
+	}
+	return ErrOrderStateConflict
+}
+
+// ClaimConfirmingReceipt upgrades an in-flight order created by an older
+// release so it can pass the same immutable receipt uniqueness guard.
+func (o *Order) ClaimConfirmingReceipt(receiptKey string) error {
+	receiptKey = strings.TrimSpace(receiptKey)
+	if receiptKey == "" {
+		return ErrReceiptAlreadyClaimed
+	}
+	result := Db.Model(&Order{}).
+		Where("id = ? and status = ? and ref_hash = ? and ref_receipt_key = ''", o.ID, OrderStatusConfirming, o.RefHash).
+		Update("ref_receipt_key", receiptKey)
+	if result.Error != nil {
+		var count int64
+		Db.Model(&Order{}).Where("ref_receipt_key = ? and id <> ?", receiptKey, o.ID).Count(&count)
+		if count > 0 {
+			return ErrReceiptAlreadyClaimed
+		}
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		o.RefReceiptKey = receiptKey
+		return nil
+	}
+	var current Order
+	if err := Db.Where("id = ?", o.ID).First(&current).Error; err != nil {
+		return err
+	}
+	if current.RefReceiptKey == receiptKey {
+		*o = current
+		return nil
+	}
+	return ErrOrderStateConflict
 }
 
 func (o *Order) SetNotifyState(state int) error {
@@ -388,7 +481,7 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 				matchAddress = strings.ToLower(matchAddress)
 			}
 		}
-		lock[matchAddress+order.Amount] = true
+		lock[paymentAllocationKey(matchAddress, order.TradeType, order.Amount)] = true
 	}
 
 	atom, precision := GetAtomicity(p.TradeType)
@@ -400,12 +493,15 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 	if amount.LessThan(atom) { // 低于最小原子精度，从最小原子精度开始计算
 		amount = atom
 	}
+	if UniqueAmountEnabled(p.TradeType) {
+		return allocateUniqueTradeAmount(wallets, amount, precision, p.TradeType, lock)
+	}
 
 	var i = 0
 	var m = 100
 	for {
 		for _, w := range wallets {
-			k := w.GetMatchAddr() + amount.String()
+			k := paymentAllocationKey(w.GetMatchAddr(), p.TradeType, amount.String())
 			if _, ok := lock[k]; ok {
 				continue
 			}
@@ -419,6 +515,89 @@ func CalcTradeAmount(wallets []Wallet, rate decimal.Decimal, p OrderParams) (Wal
 			return Wallet{}, "", errors.New("计算交易金额异常，联系管理员处理！")
 		}
 	}
+}
+
+const uniquePaymentPrecision int32 = 5
+
+// allocateUniqueTradeAmount keeps the normal rounded amount as the base and
+// uses the remaining decimal positions as an order identifier. For the usual
+// two-decimal stablecoin base this yields 001-999 at decimal positions 3-5.
+func allocateUniqueTradeAmount(wallets []Wallet, base decimal.Decimal, basePrecision int32, tradeType TradeType, lock map[string]bool) (Wallet, string, error) {
+	if basePrecision < 0 || basePrecision >= uniquePaymentPrecision {
+		return Wallet{}, "", fmt.Errorf("unique payment amount requires fewer than %d base decimals", uniquePaymentPrecision)
+	}
+
+	suffixCount := int64(1)
+	for i := basePrecision; i < uniquePaymentPrecision; i++ {
+		suffixCount *= 10
+	}
+	suffixCount--
+	unit := decimal.New(1, -uniquePaymentPrecision)
+	for _, suffix := range uniqueSuffixSequence(suffixCount) {
+		amount := base.Add(unit.Mul(decimal.NewFromInt(suffix))).StringFixed(uniquePaymentPrecision)
+		for _, wallet := range wallets {
+			key := paymentAllocationKey(wallet.GetMatchAddr(), tradeType, amount)
+			if !lock[key] {
+				return wallet, amount, nil
+			}
+		}
+	}
+
+	return Wallet{}, "", errors.New("unique payment amount space exhausted; create a new order or add a receiving wallet")
+}
+
+func uniqueSuffixSequence(max int64) []int64 {
+	if max <= 0 {
+		return nil
+	}
+	start, ok := secureRandomInt(max)
+	if !ok {
+		start = 0
+	}
+	step := int64(1)
+	for attempt := 0; ok && attempt < 16 && max > 1; attempt++ {
+		candidate, randomOK := secureRandomInt(max - 1)
+		if !randomOK {
+			break
+		}
+		candidate++
+		if greatestCommonDivisor(candidate, max) == 1 {
+			step = candidate
+			break
+		}
+	}
+
+	result := make([]int64, max)
+	for i := int64(0); i < max; i++ {
+		result[i] = (start+i*step)%max + 1
+	}
+	return result
+}
+
+func secureRandomInt(max int64) (int64, bool) {
+	value, err := cryptorand.Int(cryptorand.Reader, big.NewInt(max))
+	if err != nil {
+		return 0, false
+	}
+	return value.Int64(), true
+}
+
+func greatestCommonDivisor(a, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func paymentAllocationKey(address string, tradeType TradeType, amount string) string {
+	address = strings.TrimSpace(address)
+	if !AddrCaseSens(tradeType) {
+		address = strings.ToLower(address)
+	}
+	if parsed, err := decimal.NewFromString(strings.TrimSpace(amount)); err == nil {
+		amount = parsed.String()
+	}
+	return address + "\x00" + amount
 }
 
 // LockTradeAddress 检测交易地址，独占使用

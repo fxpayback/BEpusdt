@@ -349,6 +349,8 @@
             .then(function (res) {
                 if (res.status_code !== 200) return;
                 var d = res.data;
+                cfg.hash_submission_allowed = !!d.hash_submission_allowed;
+                renderTransactionSubmission();
                 if (d.status === 5) showConfirming();
                 else if (d.status === 2) {
                     stopTimers();
@@ -474,6 +476,10 @@
     }
 
     function showTimeout() {
+        if (cfg && cfg.hash_submission_allowed) {
+            renderTransactionSubmission();
+            return;
+        }
         if (document.getElementById('timeoutModal')) return;
         var ret = cfg.return_url || '/';
         var ov = document.createElement('div');
@@ -492,6 +498,64 @@
             '<a href="' + ret + '" class="return-btn">' + t('returnBtn', '返回商户平台') + '</a>' +
             '</div></div>';
         document.body.appendChild(ov);
+    }
+
+    function renderTransactionSubmission() {
+        var panel = document.getElementById('transactionSubmitPanel');
+        if (panel) panel.hidden = !(cfg && cfg.hash_submission_allowed);
+    }
+
+    function setTransactionSubmitStatus(message, type) {
+        var status = document.getElementById('transactionSubmitStatus');
+        if (!status) return;
+        status.textContent = message || '';
+        status.className = 'tx-submit-status' + (type ? ' ' + type : '');
+    }
+
+    function submitTransactionHash() {
+        var input = document.getElementById('transactionHashInput');
+        var button = document.getElementById('submitTransactionButton');
+        var hash = input ? input.value.trim() : '';
+        if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+            setTransactionSubmitStatus(t('hash.invalid', '请输入以 0x 开头的 66 位交易哈希。'), 'error');
+            return;
+        }
+        if (button) button.disabled = true;
+        setTransactionSubmitStatus(t('hash.pending', '暂时无法读取该交易，请稍后再次验证。'));
+        fetch('/api/v1/pay/submit-transaction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trade_id: tradeId, transaction_hash: hash })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (res.status_code !== 200) {
+                    var mismatch = /does not match|already used/i.test(String(res.message || ''));
+                    setTransactionSubmitStatus(
+                        mismatch ? t('hash.mismatch', '该交易与本订单不匹配。') : t('hash.pending', '暂时无法读取该交易，请稍后再次验证。'),
+                        mismatch ? 'error' : ''
+                    );
+                    return;
+                }
+                var data = res.data || {};
+                if (data.verification_state === 'confirmed' || data.order_status === 2) {
+                    setTransactionSubmitStatus(t('hash.confirmed', '付款已验证，正在完成订单。'), 'success');
+                    checkStatus();
+                    return;
+                }
+                if (data.verification_state === 'confirming') {
+                    setTransactionSubmitStatus(t('hash.confirming', '已找到付款，正在等待链上确认。'), 'success');
+                    showConfirming();
+                    return;
+                }
+                setTransactionSubmitStatus(t('hash.pending', '暂时无法读取该交易，请稍后再次验证。'));
+            })
+            .catch(function () {
+                setTransactionSubmitStatus(t('hash.pending', '暂时无法读取该交易，请稍后再次验证。'));
+            })
+            .finally(function () {
+                if (button) button.disabled = false;
+            });
     }
 
     function createTransaction() {
@@ -556,6 +620,7 @@
         initQrPage: function (config) {
             cfg = config || {};
             tradeId = cfg.trade_id;
+            renderTransactionSubmission();
             startCountdown(document.getElementById('timerDisplayQ'), parseInt(cfg.expired_at) || 0, parseInt(cfg.created_at) || 0, showTimeout);
             startStatusCheck();
             var caBtn = document.getElementById('copyAmountQBtn');
@@ -569,6 +634,11 @@
                 var el = document.getElementById('walletAddress');
                 if (el && el.textContent !== '--') copyText(el.textContent, t('toastAddressCopied', '地址已复制'), adIcon, true);
             });
+            var submitBtn = document.getElementById('submitTransactionButton');
+            if (submitBtn && !submitBtn.dataset.bound) {
+                submitBtn.dataset.bound = '1';
+                submitBtn.addEventListener('click', submitTransactionHash);
+            }
         },
         initI18n: initI18n,
         applyI18n: applyI18n,
@@ -637,7 +707,8 @@
             created_at: d.created_at,
             trade_id: d.trade_id,
             return_url: d.redirect_url,
-            status: d.status
+            status: d.status,
+            hash_submission_allowed: d.hash_submission_allowed
         });
     }
 

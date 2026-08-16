@@ -26,6 +26,7 @@ func bscInit() {
 		blockScanQueue: chanx.NewUnboundedChan[evmBlock](ctx, 30),
 		RPCEndpoints:   []string{model.GetC(model.RpcEndpointBsc), model.GetC(model.RpcEndpointBscFallback)},
 	}
+	registerEVMVerifier(&bsc)
 
 	Register(Task{Callback: bsc.blockDispatch})
 	Register(Task{Callback: bsc.syncBlocksForward, Duration: time.Second * 5})

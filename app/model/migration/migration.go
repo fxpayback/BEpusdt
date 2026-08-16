@@ -10,6 +10,7 @@ const TableName = "bep_migration"
 var migrations = []*gormigrate.Migration{
 	m202607081430DropOrderTradeTypeReselect(),
 	m202607261930WidenOrderReturnURL(),
+	m202608161730AddOrderReceiptKey(),
 }
 
 func Run(db *gorm.DB, initModels []any) error {

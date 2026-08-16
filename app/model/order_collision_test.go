@@ -17,14 +17,14 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 		tradeType     TradeType
 		money         string
 		existingOrder *Order
-		wantAmount    string
+		wantBase      string
 	}{
 		{
-			name:       "no collision",
-			candidate:  collisionTestWallet("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", UsdtBep20),
-			tradeType:  UsdtBep20,
-			money:      "15.00",
-			wantAmount: "2.5",
+			name:      "no collision",
+			candidate: collisionTestWallet("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", UsdtBep20),
+			tradeType: UsdtBep20,
+			money:     "15.00",
+			wantBase:  "2.50",
 		},
 		{
 			name:      "same wallet route and amount",
@@ -37,7 +37,7 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 				UsdtBep20,
 				"2.5",
 			),
-			wantAmount: "2.51",
+			wantBase: "2.50",
 		},
 		{
 			name:      "different wallet",
@@ -50,7 +50,7 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 				UsdtBep20,
 				"2.5",
 			),
-			wantAmount: "2.5",
+			wantBase: "2.50",
 		},
 		{
 			name:      "different route",
@@ -63,7 +63,7 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 				UsdtBep20,
 				"2.5",
 			),
-			wantAmount: "2.5",
+			wantBase: "2.50",
 		},
 		{
 			name:      "different amount",
@@ -76,7 +76,7 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 				UsdtBep20,
 				"2.5",
 			),
-			wantAmount: "2.51",
+			wantBase: "2.51",
 		},
 	}
 
@@ -96,8 +96,15 @@ func TestCalcTradeAmountOnlyIncrementsForExactActiveCollision(t *testing.T) {
 			if err != nil {
 				t.Fatalf("calculate trade amount: %v", err)
 			}
-			if got != test.wantAmount {
-				t.Fatalf("unexpected amount: got %s want %s", got, test.wantAmount)
+			if test.tradeType == UsdtBep20 || test.tradeType == UsdtPolygon {
+				base := decimal.RequireFromString(test.wantBase)
+				parsed, parseErr := decimal.NewFromString(got)
+				upper := base.Add(decimal.RequireFromString("0.01"))
+				if parseErr != nil || !parsed.GreaterThan(base) || !parsed.LessThan(upper) || len(got) != len("2.50000") {
+					t.Fatalf("unexpected unique amount: got %s base %s", got, base.String())
+				}
+			} else if got != test.wantBase {
+				t.Fatalf("unexpected amount: got %s want %s", got, test.wantBase)
 			}
 		})
 	}
@@ -113,12 +120,16 @@ func newCollisionTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&Conf{}, &Order{}); err != nil {
 		t.Fatalf("migrate test db: %v", err)
 	}
-	if err := db.Create(&Conf{K: AtomUSDT, V: "0.01"}).Error; err != nil {
+	if err := db.Create(&[]Conf{
+		{K: AtomUSDT, V: "0.01"},
+		{K: PaymentUniqueAmountTypes, V: "usdt.bep20,usdc.bep20,usdt.polygon,usdc.polygon"},
+	}).Error; err != nil {
 		t.Fatalf("seed atomicity: %v", err)
 	}
 
 	previousDB := Db
 	Db = db
+	RefreshC()
 	t.Cleanup(func() {
 		Db = previousDB
 		sqlDB, dbErr := db.DB()

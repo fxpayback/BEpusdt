@@ -123,6 +123,7 @@ func (Conf) Rpc(ctx *gin.Context) {
 		model.RpcEndpointSolana,
 		model.RpcEndpointXlayer,
 		model.RpcEndpointPolygon,
+		model.RpcEndpointPolygonFallback,
 		model.RpcEndpointArbitrum,
 		model.RpcEndpointEthereum,
 		model.RpcEndpointBase,

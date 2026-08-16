@@ -67,6 +67,15 @@
             'instruction.networkUse': '使用当前页面选择的 {{network}} 网络',
             'instruction.amount': '精准转入金额',
             'instruction.autoConfirm': '转账后保持页面打开，系统会自动确认订单',
+            'hash.title': '可选恢复：提交交易哈希',
+            'hash.help': '系统通常会自动检测精确到账金额。仅在监控暂时延迟时使用此项，并粘贴钱包或交易所提供的交易哈希。',
+            'hash.input': '交易哈希',
+            'hash.submit': '我已付款',
+            'hash.invalid': '请输入以 0x 开头的 66 位交易哈希。',
+            'hash.pending': '暂时无法读取该交易，请稍后再次验证。订单不会在未验证时完成。',
+            'hash.confirming': '已找到付款，正在等待链上确认（{{current}} / {{required}}）。',
+            'hash.confirmed': '付款已验证，正在完成订单。',
+            'hash.mismatch': '该交易与本订单的网络、币种、地址或金额不匹配。',
             'message.createFailed': '生成付款信息失败',
             'message.networkError': '网络错误，请稍后重试',
             'message.loadFailed': '加载订单失败',
@@ -186,6 +195,15 @@
             'instruction.networkUse': 'Use the selected {{network}} network',
             'instruction.amount': 'Transfer the exact amount',
             'instruction.autoConfirm': 'Keep this page open after transfer; the system will confirm automatically',
+            'hash.title': 'Optional recovery: submit transaction hash',
+            'hash.help': 'The gateway normally detects your exact payment automatically. Use this only if monitoring is temporarily delayed; paste the transaction hash from your wallet or exchange.',
+            'hash.input': 'Transaction hash',
+            'hash.submit': "I've paid",
+            'hash.invalid': 'Enter a 66-character transaction hash beginning with 0x.',
+            'hash.pending': 'The transaction cannot be read yet. Verify again shortly; the order will not complete without proof.',
+            'hash.confirming': 'Payment found; waiting for confirmations ({{current}} / {{required}}).',
+            'hash.confirmed': 'Payment verified. Completing the order.',
+            'hash.mismatch': 'This transaction does not match the order network, token, address, or amount.',
             'message.createFailed': 'Failed to generate payment details',
             'message.networkError': 'Network error, please try again later',
             'message.noNetworks': 'No payment network loaded. Please check wallet configuration.',
@@ -1311,6 +1329,56 @@
         if (amountInstruction) amountInstruction.textContent = t('instruction.amount');
 
         renderQrCode(address);
+        renderTransactionSubmission();
+    }
+
+    function renderTransactionSubmission() {
+        var panel = $('#transactionSubmitPanel');
+        if (!panel) return;
+        panel.hidden = !(orderData && orderData.hash_submission_allowed);
+    }
+
+    function setTransactionSubmitStatus(message, type) {
+        var status = $('#transactionSubmitStatus');
+        if (!status) return;
+        status.textContent = message || '';
+        status.className = 'tx-submit-status' + (type ? ' ' + type : '');
+    }
+
+    function submitTransactionHash() {
+        var input = $('#transactionHashInput');
+        var button = $('#submitTransactionButton');
+        var hash = input ? input.value.trim() : '';
+        if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+            setTransactionSubmitStatus(t('hash.invalid'), 'error');
+            return;
+        }
+        if (button) button.disabled = true;
+        setTransactionSubmitStatus(t('hash.pending'));
+        apiPost('/api/v1/pay/submit-transaction', {
+            trade_id: tradeId,
+            transaction_hash: hash
+        }).then(function (data) {
+            if (data.verification_state === 'confirmed' || data.order_status === 2) {
+                setTransactionSubmitStatus(t('hash.confirmed'), 'success');
+                checkStatus();
+                return;
+            }
+            if (data.verification_state === 'confirming') {
+                setTransactionSubmitStatus(t('hash.confirming', {
+                    current: data.confirmations || 0,
+                    required: data.required_confirmations || 0
+                }), 'success');
+                setStatusKey('status.waitingConfirm');
+                return;
+            }
+            setTransactionSubmitStatus(t('hash.pending'));
+        }).catch(function (error) {
+            var mismatch = /does not match|already used/i.test(String(error && error.message || ''));
+            setTransactionSubmitStatus(mismatch ? t('hash.mismatch') : t('hash.pending'), mismatch ? 'error' : '');
+        }).finally(function () {
+            if (button) button.disabled = false;
+        });
     }
 
     function renderQrCode(address) {
@@ -1419,9 +1487,11 @@
 
         apiPost('/api/v1/pay/info', {trade_id: tradeId})
             .then(function (data) {
+				orderData = Object.assign({}, orderData || {}, data);
+				renderTransactionSubmission();
                 if (data.status === 2) {
                     showSuccess(data);
-                } else if (data.status === 3) {
+                } else if (data.status === 3 && !data.hash_submission_allowed) {
                     showTimeout();
                 } else if (data.status === 4) {
                     showCanceled(data);
@@ -1487,6 +1557,11 @@
     }
 
     function showTimeout() {
+		if (orderData && orderData.hash_submission_allowed) {
+			setStatusKey('status.timeout');
+			renderTransactionSubmission();
+			return;
+		}
         setStatusKey('status.timeout');
         showOverlay('timeout', t('overlay.timeoutTitle'), t('overlay.timeoutBody'), t('overlay.returnMerchant'), function () {
             window.location.href = config.return_url || '/';
@@ -1545,6 +1620,11 @@
             });
         }
 
+		var submitTransactionButton = $('#submitTransactionButton');
+		if (submitTransactionButton) {
+			submitTransactionButton.addEventListener('click', submitTransactionHash);
+		}
+
         document.addEventListener('click', function (event) {
             if (!event.target.closest('.custom-select')) {
                 closeDropdowns();
@@ -1582,7 +1662,7 @@
                     showSuccess(data);
                     return;
                 }
-                if (data.status === 3) {
+				if (data.status === 3 && !data.hash_submission_allowed) {
                     showTimeout();
                     return;
                 }

@@ -109,9 +109,17 @@ func TestRebuildOrderConcurrentAllocationsRemainUnique(t *testing.T) {
 		amounts = append(amounts, order.Amount)
 	}
 	sort.Strings(amounts)
-	want := []string{"2.5", "2.51"}
-	if len(amounts) != len(want) || amounts[0] != want[0] || amounts[1] != want[1] {
-		t.Fatalf("allocated amounts = %v, want %v", amounts, want)
+	if len(amounts) != 2 || amounts[0] == amounts[1] {
+		t.Fatalf("allocated amounts = %v, want two distinct amounts", amounts)
+	}
+	for _, amount := range amounts {
+		parsed, err := decimal.NewFromString(amount)
+		if err != nil || !parsed.GreaterThan(decimal.RequireFromString("2.50")) || !parsed.LessThan(decimal.RequireFromString("2.51")) {
+			t.Fatalf("allocated amount = %q, want a five-decimal amount inside (2.50, 2.51)", amount)
+		}
+		if len(amount) != len("2.50000") {
+			t.Fatalf("allocated amount = %q, want five decimals", amount)
+		}
 	}
 }
 
@@ -152,9 +160,13 @@ func TestRebuildOrderConcurrentSameOrderDoesNotCollideWithItself(t *testing.T) {
 	for err := range errs {
 		t.Fatalf("rebuild same pending order: %v", err)
 	}
+	var allocatedAmount string
 	for order := range results {
-		if order.Amount != "2.5" {
-			t.Fatalf("same order amount = %s, want 2.5", order.Amount)
+		if allocatedAmount == "" {
+			allocatedAmount = order.Amount
+		}
+		if order.Amount != allocatedAmount {
+			t.Fatalf("same order returned different amounts: %s and %s", allocatedAmount, order.Amount)
 		}
 	}
 
@@ -162,7 +174,7 @@ func TestRebuildOrderConcurrentSameOrderDoesNotCollideWithItself(t *testing.T) {
 	if err := Db.Where("id = ?", pending.ID).Take(&stored).Error; err != nil {
 		t.Fatalf("reload same order: %v", err)
 	}
-	if stored.Amount != "2.5" || stored.ClientFingerprint != "same-browser" {
+	if stored.Amount != allocatedAmount || stored.ClientFingerprint != "same-browser" {
 		t.Fatalf("stored order amount/fingerprint = %q/%q", stored.Amount, stored.ClientFingerprint)
 	}
 }
@@ -202,6 +214,7 @@ func newTradeConcurrencyTestDB(t *testing.T) *gorm.DB {
 		{K: PaymentTimeout, V: "1200"},
 		{K: RateSyncMaxAge, V: "900"},
 		{K: AtomUSDT, V: "0.01"},
+		{K: PaymentUniqueAmountTypes, V: "usdt.bep20,usdc.bep20,usdt.polygon,usdc.polygon"},
 	}
 	if err := db.Create(&configs).Error; err != nil {
 		t.Fatalf("seed config: %v", err)

@@ -55,7 +55,7 @@
             <svg viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-5h1.5v5zm0-6.5h-1.5V3.5h1.5V5z"/>
             </svg>
-            <span data-i18n="feeNotice">请确保收款地址足额收到页面显示的金额。网络费或交易所提现费需另付；到账不足将无法自动完成订单。</span>
+            <span data-i18n="feeNotice">请按页面显示的完整金额付款；BSC/Polygon 的 USDT 或 USDC 必须包含全部 5 位小数（例如 1.61374）。网络费或交易所提现费需另付；到账不足将无法自动完成订单。</span>
         </div>
         <div class="timer-badge-wrap">
             <div class="timer-badge">
@@ -155,7 +155,7 @@
             <svg viewBox="0 0 16 16" fill="currentColor">
                 <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-5h1.5v5zm0-6.5h-1.5V3.5h1.5V5z"/>
             </svg>
-            <span data-i18n="feeNotice">请确保收款地址足额收到页面显示的金额。网络费或交易所提现费需另付；到账不足将无法自动完成订单。</span>
+            <span data-i18n="feeNotice">请按页面显示的完整金额付款；BSC/Polygon 的 USDT 或 USDC 必须包含全部 5 位小数（例如 1.61374）。网络费或交易所提现费需另付；到账不足将无法自动完成订单。</span>
         </div>
         <div class="timer-badge-wrap">
             <div class="timer-badge">
@@ -198,6 +198,15 @@
             选错了付款方式？返回重选
         </button>
     </div>
+    <section class="tx-submit-panel" id="transactionSubmitPanel" hidden>
+        <label for="transactionHashInput" data-i18n="hash.title">可选恢复：提交交易哈希</label>
+        <p data-i18n="hash.help">系统通常会自动检测精确到账金额。仅在监控暂时延迟时使用此项，并粘贴钱包或交易所提供的交易哈希。</p>
+        <div class="tx-submit-row">
+            <input id="transactionHashInput" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="66" data-i18n="[aria-label]hash.input" aria-label="交易哈希" placeholder="0x...">
+            <button class="pay-btn" id="submitTransactionButton" type="button" data-i18n="hash.submit">我已付款</button>
+        </div>
+        <small class="tx-submit-status" id="transactionSubmitStatus" aria-live="polite"></small>
+    </section>
     <div class="card-footer">
         <div class="footer-powered">
             <span data-i18n="poweredBy">Powered by</span><a href="https://github.com/v03413/BEpusdt" target="_blank">BEpusdt</a>

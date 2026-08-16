@@ -60,20 +60,24 @@ const (
 	PaymentReconciliationLookbackHour    ConfKey = "payment_recon_lookback_hour"     // 过期订单补偿回溯时间
 	PaymentReconciliationExcludeOrderIDs ConfKey = "payment_recon_exclude_order_ids" // 不参与过期订单补偿的商户订单号，逗号分隔
 	PaymentNetworkSort                   ConfKey = "payment_network_sort"            // 收银台网络顺序，逗号分隔
+	PaymentUniqueAmountTypes             ConfKey = "payment_unique_amount_types"     // 使用五位小数唯一支付金额的交易类型
+	PaymentHashSubmitTypes               ConfKey = "payment_hash_submit_types"       // 使用交易哈希按需验证的交易类型
+	PaymentHashSubmitLateMinutes         ConfKey = "payment_hash_submit_late_min"    // 订单过期后允许提交哈希的分钟数
 
-	RpcEndpointPlasma         ConfKey = "rpc_endpoint_plasma"            // Plasma RPC节点
-	RpcEndpointBsc            ConfKey = "rpc_endpoint_bsc"               // BSC RPC节点
-	RpcEndpointSolana         ConfKey = "rpc_endpoint_solana"            // Solana RPC节点
-	RpcEndpointXlayer         ConfKey = "rpc_endpoint_xlayer"            // Xlayer RPC节点
-	RpcEndpointPolygon        ConfKey = "rpc_endpoint_polygon"           // Polygon RPC节点
-	RpcEndpointArbitrum       ConfKey = "rpc_endpoint_arbitrum"          // Arbitrum RPC节点
-	RpcEndpointEthereum       ConfKey = "rpc_endpoint_ethereum"          // Ethereum RPC节点
-	RpcEndpointBase           ConfKey = "rpc_endpoint_base"              // Base RPC节点
-	RpcEndpointAptos          ConfKey = "rpc_endpoint_aptos"             // APTOS RPC节点
-	RpcEndpointTron           ConfKey = "rpc_endpoint_tron"              // TRON RPC节点
-	RpcEndpointTronGridApiKey ConfKey = "rpc_endpoint_tron_grid_api_key" // TRON RPC节点 TronGrid Api Key
-	RpcGlobalConfigUrlTon     ConfKey = "rpc_global_config_url_ton"      // Ton Global Config Url
-	RpcEndpointBscFallback    ConfKey = "rpc_endpoint_bsc_fallback"      // BSC备用RPC节点
+	RpcEndpointPlasma          ConfKey = "rpc_endpoint_plasma"            // Plasma RPC节点
+	RpcEndpointBsc             ConfKey = "rpc_endpoint_bsc"               // BSC RPC节点
+	RpcEndpointSolana          ConfKey = "rpc_endpoint_solana"            // Solana RPC节点
+	RpcEndpointXlayer          ConfKey = "rpc_endpoint_xlayer"            // Xlayer RPC节点
+	RpcEndpointPolygon         ConfKey = "rpc_endpoint_polygon"           // Polygon RPC节点
+	RpcEndpointPolygonFallback ConfKey = "rpc_endpoint_polygon_fallback"  // Polygon备用RPC节点
+	RpcEndpointArbitrum        ConfKey = "rpc_endpoint_arbitrum"          // Arbitrum RPC节点
+	RpcEndpointEthereum        ConfKey = "rpc_endpoint_ethereum"          // Ethereum RPC节点
+	RpcEndpointBase            ConfKey = "rpc_endpoint_base"              // Base RPC节点
+	RpcEndpointAptos           ConfKey = "rpc_endpoint_aptos"             // APTOS RPC节点
+	RpcEndpointTron            ConfKey = "rpc_endpoint_tron"              // TRON RPC节点
+	RpcEndpointTronGridApiKey  ConfKey = "rpc_endpoint_tron_grid_api_key" // TRON RPC节点 TronGrid Api Key
+	RpcGlobalConfigUrlTon      ConfKey = "rpc_global_config_url_ton"      // Ton Global Config Url
+	RpcEndpointBscFallback     ConfKey = "rpc_endpoint_bsc_fallback"      // BSC备用RPC节点
 
 	RateSyncCoingeckoApiUrl ConfKey = "rate_sync_coingecko_api_url" // 汇率同步 Coingecko Api URL
 	RateSyncCoingeckoApiKey ConfKey = "rate_sync_coingecko_api_key" // 汇率同步 Coingecko Api Key

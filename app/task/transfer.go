@@ -26,6 +26,7 @@ type transfer struct {
 	Timestamp   time.Time       `json:"timestamp"`
 	TradeType   model.TradeType `json:"trade_type"`
 	BlockNum    int             `json:"block_num"`
+	ReceiptKey  string          `json:"receipt_key"`
 }
 
 type resource struct {
@@ -114,7 +115,7 @@ func orderTransferHandle(ctx context.Context) {
 					}
 
 					// 订单匹配 进入确认流程
-					if err := o.MarkConfirming(t.BlockNum, t.FromAddress, t.TxHash, t.Timestamp, t.Amount); err != nil {
+					if err := o.MarkConfirmingReceipt(t.BlockNum, t.FromAddress, t.TxHash, t.ReceiptKey, t.Timestamp, t.Amount); err != nil {
 						log.Task.Warn("mark order confirming failed:", err)
 						continue
 					}
@@ -202,7 +203,16 @@ func notOrderTransferHandle(ctx context.Context) {
 					var record = model.NotifyRecord{Txid: t.TxHash}
 					model.Db.Create(&record)
 
-					notifier.NonOrderTransfer(model.TronTransfer(t), wa)
+					notifier.NonOrderTransfer(model.TronTransfer{
+						Network:     t.Network,
+						TxHash:      t.TxHash,
+						Amount:      t.Amount,
+						FromAddress: t.FromAddress,
+						RecvAddress: t.RecvAddress,
+						Timestamp:   t.Timestamp,
+						TradeType:   t.TradeType,
+						BlockNum:    t.BlockNum,
+					}, wa)
 				}
 			}
 
@@ -262,10 +272,10 @@ func tronResourceHandle(ctx context.Context) {
 	}
 }
 
-func markFinalConfirmed(o model.Order) {
+func markFinalConfirmed(o model.Order) bool {
 	if strings.TrimSpace(o.RefHash) == "" || o.RefBlockNum <= 0 || o.ConfirmedAt == nil || o.ConfirmedAt.IsZero() {
 		log.Task.Warn(fmt.Sprintf("settlement rejected provider_order_id=%d reason=missing_chain_metadata", o.ID))
-		return
+		return false
 	}
 
 	result := model.Db.Model(&model.Order{}).
@@ -273,15 +283,16 @@ func markFinalConfirmed(o model.Order) {
 		Update("status", model.OrderStatusSuccess)
 	if result.Error != nil {
 		log.Task.Warn("mark order successful failed:", result.Error)
-		return
+		return false
 	}
 	if result.RowsAffected != 1 {
-		return
+		return false
 	}
 
 	o.Status = model.OrderStatusSuccess
 	log.Task.Info(fmt.Sprintf("order transition provider_order_id=%d from=%d to=%d block=%d has_tx_hash=true", o.ID, model.OrderStatusConfirming, model.OrderStatusSuccess, o.RefBlockNum))
 	notifyOrderSuccess(o)
+	return true
 }
 
 func receivableOrderStatuses() []int {
@@ -485,7 +496,8 @@ func amountMatch(amount decimal.Decimal, target, tradeType string) bool {
 func amountMatchMode(amount decimal.Decimal, target, tradeType string, mode model.MatchMode) bool {
 	switch mode {
 	case model.Classic:
-		return amount.String() == target
+		targetAmount, err := decimal.NewFromString(target)
+		return err == nil && amount.Equal(targetAmount)
 	case model.HasPrefix:
 		s := amount.String()
 		if !strings.HasPrefix(s, target) {

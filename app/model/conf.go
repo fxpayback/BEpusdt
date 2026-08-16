@@ -33,11 +33,12 @@ var defaultConf = map[ConfKey]string{
 	PaymentMinAmount:                     "0.01",
 	PaymentMaxAmount:                     "99999",
 	RpcEndpointTron:                      "grpc.trongrid.io:50051",
-	RpcEndpointBsc:                       "https://bsc-mainnet.public.blastapi.io/",
-	RpcEndpointBscFallback:               "https://bsc-rpc.publicnode.com",
+	RpcEndpointBsc:                       "https://bsc.publicnode.com,https://bsc-rpc.publicnode.com",
+	RpcEndpointBscFallback:               "https://bsc-mainnet.gateway.tatum.io,https://bsc-mainnet.public.blastapi.io/",
 	RpcEndpointSolana:                    "https://solana-rpc.publicnode.com/",
 	RpcEndpointXlayer:                    "https://xlayerrpc.okx.com/",
-	RpcEndpointPolygon:                   "https://polygon-public.nodies.app/",
+	RpcEndpointPolygon:                   "https://polygon.publicnode.com,https://polygon-bor-rpc.publicnode.com",
+	RpcEndpointPolygonFallback:           "https://polygon-public.nodies.app/,https://polygon-mainnet.gateway.tatum.io",
 	RpcEndpointArbitrum:                  "https://arb1.arbitrum.io/rpc",
 	RpcEndpointEthereum:                  "https://ethereum-public.nodies.app/",
 	RpcEndpointBase:                      "https://base-public.nodies.app/",
@@ -55,6 +56,9 @@ var defaultConf = map[ConfKey]string{
 	PaymentReconciliationLookbackHour:    "0",
 	PaymentReconciliationExcludeOrderIDs: "",
 	PaymentNetworkSort:                   "",
+	PaymentUniqueAmountTypes:             "usdt.bep20,usdc.bep20,usdt.polygon,usdc.polygon",
+	PaymentHashSubmitTypes:               "usdt.bep20,usdc.bep20,usdt.polygon,usdc.polygon",
+	PaymentHashSubmitLateMinutes:         "180",
 	SystemInstallLock:                    "0",
 	RateSyncCoingeckoApiUrl:              "https://api.coingecko.com",
 	RateSyncHistoryDays:                  "30",
@@ -343,4 +347,15 @@ func GetReconciliationLookbackHour() time.Duration {
 		return 0
 	}
 	return -time.Duration(num) * time.Hour
+}
+
+func GetHashSubmitLateWindow() time.Duration {
+	minutes := cast.ToInt(GetC(PaymentHashSubmitLateMinutes))
+	if minutes <= 0 {
+		return 0
+	}
+	if minutes > 24*60 {
+		minutes = 24 * 60
+	}
+	return time.Duration(minutes) * time.Minute
 }

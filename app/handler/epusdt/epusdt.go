@@ -2,17 +2,21 @@ package epusdt
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"github.com/v03413/bepusdt/app/log"
 	"github.com/v03413/bepusdt/app/model"
+	"github.com/v03413/bepusdt/app/task"
 	"github.com/v03413/bepusdt/app/utils"
 )
 
@@ -65,6 +69,15 @@ type methodsReq struct {
 	TradeID  string `json:"trade_id" binding:"required"`
 	Currency string `json:"currency"`
 }
+
+type submitTransactionReq struct {
+	TradeID         string `json:"trade_id" binding:"required"`
+	TransactionHash string `json:"transaction_hash" binding:"required"`
+}
+
+var hashSubmitAttempts sync.Map
+
+const hashSubmitThrottle = 5 * time.Second
 
 func loadPayOrder(ctx *gin.Context, tradeID string) (model.Order, bool) {
 	order, ok := model.GetTradeOrder(tradeID)
@@ -457,24 +470,97 @@ func (Epusdt) Info(ctx *gin.Context) {
 	if !ok {
 		return
 	}
+	hashSubmissionAllowed := order.FingerprintBound() && model.HashSubmissionEnabled(order.TradeType) &&
+		(order.Status == model.OrderStatusWaiting ||
+			(order.Status == model.OrderStatusExpired && model.GetHashSubmitLateWindow() > 0 &&
+				time.Now().Before(order.ExpiredAt.Add(model.GetHashSubmitLateWindow()))))
 
 	ctx.JSON(200, respSuccJson(gin.H{
-		"network":       order.Network(),                     // 网络信息
-		"trade_id":      order.TradeId,                       // 交易编号
-		"order_id":      order.OrderId,                       // 商户订单
-		"trade_type":    order.TradeType,                     // 交易类型
-		"status":        order.Status,                        // 订单状态
-		"money":         order.Money,                         // 订单金额
-		"actual_amount": order.Amount,                        // 实付数额
-		"token":         order.Address,                       // 收款地址
-		"fiat":          order.Fiat,                          // 法币类型
-		"name":          order.Name,                          // 商品名称
-		"expired_at":    order.ExpiredAt.Unix(),              // 截止时间
-		"created_at":    order.CreatedAt.Time().Unix(),       // 创建时间
-		"trade_url":     order.GetTxUrl(),                    // 链上详情
-		"support_url":   model.GetC(model.PaymentSupportUrl), // 客服链接
-		"redirect_url":  order.RedirectUrl(),                 // 跳转地址
-		"reselect":      order.CanReselectPayment(),          // 是否允许确认交易类型后重选
+		"network":                 order.Network(),                     // 网络信息
+		"trade_id":                order.TradeId,                       // 交易编号
+		"order_id":                order.OrderId,                       // 商户订单
+		"trade_type":              order.TradeType,                     // 交易类型
+		"status":                  order.Status,                        // 订单状态
+		"money":                   order.Money,                         // 订单金额
+		"actual_amount":           order.Amount,                        // 实付数额
+		"token":                   order.Address,                       // 收款地址
+		"fiat":                    order.Fiat,                          // 法币类型
+		"name":                    order.Name,                          // 商品名称
+		"expired_at":              order.ExpiredAt.Unix(),              // 截止时间
+		"created_at":              order.CreatedAt.Time().Unix(),       // 创建时间
+		"trade_url":               order.GetTxUrl(),                    // 链上详情
+		"support_url":             model.GetC(model.PaymentSupportUrl), // 客服链接
+		"redirect_url":            order.RedirectUrl(),                 // 跳转地址
+		"reselect":                order.CanReselectPayment(),          // 是否允许确认交易类型后重选
+		"hash_submission_enabled": model.HashSubmissionEnabled(order.TradeType),
+		"hash_submission_allowed": hashSubmissionAllowed,
+	}))
+}
+
+func (Epusdt) SubmitTransaction(ctx *gin.Context) {
+	var req submitTransactionReq
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(200, respFailJson("invalid transaction submission"))
+		return
+	}
+	order, ok := loadPayOrder(ctx, req.TradeID)
+	if !ok {
+		return
+	}
+	if !order.FingerprintBound() || !model.HashSubmissionEnabled(order.TradeType) {
+		ctx.JSON(200, respFailJson("transaction submission unavailable"))
+		return
+	}
+	if order.Status != model.OrderStatusWaiting && order.Status != model.OrderStatusExpired &&
+		order.Status != model.OrderStatusConfirming && order.Status != model.OrderStatusSuccess {
+		ctx.JSON(200, respFailJson("order status does not allow transaction submission"))
+		return
+	}
+	now := time.Now()
+	if now.After(order.ExpiredAt) && order.Status != model.OrderStatusConfirming && order.Status != model.OrderStatusSuccess {
+		lateWindow := model.GetHashSubmitLateWindow()
+		if lateWindow <= 0 || now.After(order.ExpiredAt.Add(lateWindow)) {
+			ctx.JSON(200, respFailJson("order expired"))
+			return
+		}
+	}
+	hash, valid := task.NormalizeEVMHash(req.TransactionHash)
+	if !valid {
+		ctx.JSON(200, respFailJson("invalid transaction hash"))
+		return
+	}
+	throttleKey := order.TradeId + ":" + utils.ClientFingerprint(ctx)
+	if order.Status != model.OrderStatusConfirming && order.Status != model.OrderStatusSuccess {
+		if last, found := hashSubmitAttempts.Load(throttleKey); found && now.Sub(last.(time.Time)) < hashSubmitThrottle {
+			ctx.JSON(200, respSuccJson(gin.H{
+				"verification_state": task.SubmittedTransactionPending,
+				"order_status":       order.Status,
+				"retry_after":        int(hashSubmitThrottle.Seconds()),
+			}))
+			return
+		}
+		hashSubmitAttempts.Store(throttleKey, now)
+	}
+
+	verifyCtx, cancel := context.WithTimeout(ctx.Request.Context(), 20*time.Second)
+	defer cancel()
+	result, err := task.SubmitEVMTransaction(verifyCtx, order, hash)
+	if err != nil {
+		switch {
+		case errors.Is(err, task.ErrSubmittedTransactionInvalid):
+			ctx.JSON(200, respFailJson("transaction does not match this order"))
+		case errors.Is(err, model.ErrReceiptAlreadyClaimed):
+			ctx.JSON(200, respFailJson("transaction receipt already used"))
+		default:
+			ctx.JSON(200, respFailJson("transaction verification unavailable"))
+		}
+		return
+	}
+	ctx.JSON(200, respSuccJson(gin.H{
+		"verification_state":     result.State,
+		"order_status":           result.OrderStatus,
+		"confirmations":          result.Confirmations,
+		"required_confirmations": result.RequiredConfirmations,
 	}))
 }
 
